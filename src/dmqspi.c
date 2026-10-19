@@ -2,83 +2,41 @@
 #include "dmod.h"
 #include "dmqspi.h"
 
-/* Example internal state - replace with your module's real fields. */
-struct dmqspi
-{
-    bool valid;
-};
-
-dmod_dmqspi_api_declaration(1.0, dmqspi_t, _create, ( void ))
-{
-    /* Dmod_Malloc/Dmod_Free (SAL) are dmod's own heap functions - embedded
-     * targets don't necessarily link a libc allocator, so use these instead
-     * of malloc()/free() in module code. */
-    struct dmqspi *instance = Dmod_Malloc(sizeof(*instance));
-    if (instance == NULL)
-    {
-        return NULL;
-    }
-
-    instance->valid = true;
-    return instance;
-}
-
-dmod_dmqspi_api_declaration(1.0, void, _destroy, ( dmqspi_t handle ))
-{
-    Dmod_Free(handle);
-}
-
-dmod_dmqspi_api_declaration(1.0, bool, _is_valid, ( dmqspi_t handle ))
-{
-    return handle != NULL && handle->valid;
-}
-
-/**
- * @brief Pre-initialization function for the module.
- *
- * @note This function is optional. You can remove it if you don't need it.
- *
- * This function is called when the module enabling is in progress.
- *
- * You can use this function to load the required dependencies, such as
- * other modules. Please be aware that the module is not fully initialized,
- * so not all the API functions are available - you can check if the API
- * is connected by calling the Dmod_IsFunctionConnected() function.
+/*
+ * Module entry + configuration helpers. The two big pieces live elsewhere:
+ *   src/dmqspi_flash.c  - flash-chip layer (public API in include/dmqspi.h)
+ *   src/dmqspi_driver.c - dmdrvi driver ("dmqspi" in the .ini) exposing the
+ *                         block-device node
+ * See docs/architecture.md and docs/tasks.md.
  */
-void dmod_preinit(void)
+
+/* Module state (also guarantees the module has a data section, which the dmod
+ * packer requires). TODO: hold the opened flash handles here. */
+static int g_dmqspi_ref_count = 1;
+
+dmod_dmqspi_api_declaration(1.0, bool, _validate_config, ( const dmqspi_config_t *config ))
 {
-    if(Dmod_IsFunctionConnected( Dmod_Printf ))
-    {
-        Dmod_Printf("API is connected!\n");
-    }
+    if (config == NULL || config->instance == 0)
+        return false;
+    if (config->flash_size_bytes == 0 || (config->flash_size_bytes & (config->flash_size_bytes - 1)) != 0)
+        return false;       /* FSIZE needs a power of two */
+    if (config->clock_hz == 0)
+        return false;
+    if (config->cs_high_cycles < 1 || config->cs_high_cycles > 8)
+        return false;
+    if (config->bank != dmqspi_bank_1 && config->bank != dmqspi_bank_2)
+        return false;
+    return true;
 }
 
-/**
- * @brief Initialization function for the module.
- *
- * This function is called when the module is enabled.
- * Please use this function to initialize the module, for instance:
- * - initialize the module variables
- * - initialize the module hardware
- * - allocate memory
- */
 int dmod_init(const Dmod_Config_t *Config)
 {
-    Dmod_Printf("Hello, World!\n");
-    return 0;
+    (void)Config;
+    Dmod_Printf("dmqspi: skeleton, not implemented yet\n");
+    return g_dmqspi_ref_count > 0 ? 0 : -1;
 }
 
-/**
- * @brief De-initialization function for the module.
- *
- * This function is called when the module is disabled.
- * Please use this function to de-initialize the module, for instance:
- * - free memory
- * - de-initialize the module hardware
- * - de-initialize the module variables
- */
 int dmod_deinit(void)
 {
-    Dmod_Printf("Goodbye, World!\n");
     return 0;
 }

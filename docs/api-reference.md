@@ -1,12 +1,10 @@
-# dmqspi API Reference
+# API reference
 
-Document the module's public types and functions here as you add them to
-`include/dmqspi.h`.
+* `include/dmqspi.h` - flash-chip layer (`dmqspi_flash_*`), `dmqspi_validate_config`.
+  Normal clients use the block node `/dev/dmqspi<N>` instead (docs/architecture.md).
+* `include/dmqspi_port.h` - controller API implemented by `dmqspi_port`.
+* `include/dmqspi_types.h` - command descriptor, config, chip description, ioctl numbers.
+* `include/dmqspi_flash_cmds.h` - NOR opcodes and status bits.
 
-## Types
-
-_(none yet)_
-
-## Functions
-
-_(none yet)_
+Return convention everywhere: `0` / byte count on success, negative errno on failure.
+Every declaration carries its doc comment in the header - read those first.

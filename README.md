@@ -3,11 +3,24 @@
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![CI](https://github.com/choco-technologies/dmqspi/actions/workflows/ci.yml/badge.svg)](https://github.com/choco-technologies/dmqspi/actions/workflows/ci.yml)
 
-dmqspi DMOD library module.
+dmqspi - QUADSPI (external NOR flash) driver for DMOD. **Status: skeleton** - interfaces and docs only, no implementation yet (see [docs/tasks.md](docs/tasks.md)).
 
 ## Description
 
-TODO: describe what this module does.
+dmqspi exposes an external quad-SPI NOR flash (first target: the Micron
+N25Q128A, 16 MB, on the STM32F746G-DISCO) as a **dmdrvi block device**
+`/dev/dmqspi<N>` with read, write and erase, plus an optional memory-mapped
+(XIP) window at 0x90000000.
+
+Two modules, same driver+port split as dmspi/dmsdio:
+
+| Module | Contains | Hardware knowledge |
+| --- | --- | --- |
+| `dmqspi` | dmdrvi driver, flash-chip layer (JEDEC ID, quad enable, page program, sector erase), chip table | none - speaks only to `dmqspi_port` |
+| `dmqspi_port` | QUADSPI controller: send a command, move data, auto-poll, memory-mapped mode | `src/port/stm32_common` (shared), `stm32f4`, `stm32f7` |
+
+Start with [docs/architecture.md](docs/architecture.md); the implementation
+plan, in the order it should be done, is [docs/tasks.md](docs/tasks.md).
 
 ## Building
 

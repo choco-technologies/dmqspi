@@ -6,46 +6,51 @@
 #include <stddef.h>
 #include "dmod_types.h"
 #include "dmqspi_defs.h"
+#include "dmqspi_types.h"
 
-/**
- * Public API for the dmqspi module.
+/*
+ * Public API of dmqspi = the flash-chip layer. It turns the raw controller
+ * (dmqspi_port) into "a NOR flash you can read, program and erase".
  *
- * Functions are declared with the dmod_dmqspi_api(...) macro - dmod's
- * standard pattern for functions callable from other modules (or from this
- * module's own tests/), resolved dynamically by the loader rather than
- * through normal static linkage. See dm_sw_ring/include/dm_sw_ring.h for a
- * fully worked real-world example of the same shape.
+ * Normal clients (littlefs, automount, shell) do NOT use this header: they
+ * open the block-device node /dev/dmqspi<N> through dmdrvi (read/write at
+ * byte offsets + DMDRVI_IOCTL_BLOCK_GET_INFO / _ERASE). This API exists for
+ * the driver itself, for tests, and for tools that already hold a handle.
  *
- * Definitions in src/dmqspi.c use the matching
- * dmod_dmqspi_api_declaration(...) macro - a plain C function
- * definition here will NOT satisfy these declarations at link time.
- *
- * This is an example interface using the usual "opaque handle" pattern -
- * replace the handle, functions, and struct definition in
- * src/dmqspi.c with your module's real API.
+ * All functions return 0 / bytes on success, negative errno on failure.
+ * Offsets are bytes from the start of the chip. See docs/architecture.md.
  */
 
-/* Opaque handle - the real struct is defined in src/dmqspi.c */
-typedef struct dmqspi* dmqspi_t;
+/** Opaque flash handle - the struct lives in src/dmqspi_flash.c */
+typedef struct dmqspi_flash* dmqspi_flash_t;
 
-/**
- * Create a new dmqspi instance.
- *
- * @return A valid handle on success, or NULL on allocation failure.
- */
-dmod_dmqspi_api(1.0, dmqspi_t, _create, ( void ));
+/** Check a configuration without touching hardware (safe in host tests). */
+dmod_dmqspi_api(1.0, bool, _validate_config, ( const dmqspi_config_t *config ));
 
-/**
- * Destroy an instance created by dmqspi_create(). Safe to call with
- * NULL.
- */
-dmod_dmqspi_api(1.0, void, _destroy, ( dmqspi_t handle ));
+/** Init the controller (port), read the JEDEC ID, match it in the chip table
+ *  (fallback: SFDP), enable quad mode. NULL on failure. */
+dmod_dmqspi_api(1.0, dmqspi_flash_t, _flash_open, ( const dmqspi_config_t *config ));
 
-/**
- * Example accessor - replace with your module's real API.
- *
- * @return true if handle is a valid, non-NULL instance.
- */
-dmod_dmqspi_api(1.0, bool, _is_valid, ( dmqspi_t handle ));
+/** Release the chip and deinit the controller. NULL-safe. */
+dmod_dmqspi_api(1.0, void, _flash_close, ( dmqspi_flash_t flash ));
+
+/** Identified chip description (never NULL for a valid handle). */
+dmod_dmqspi_api(1.0, const dmqspi_chip_t*, _flash_get_chip, ( dmqspi_flash_t flash ));
+
+/** Read `size` bytes at `offset`. Uses quad fast-read; transparently leaves
+ *  memory-mapped mode if active. Returns bytes read. */
+dmod_dmqspi_api(1.0, int, _flash_read, ( dmqspi_flash_t flash, uint32_t offset, void *buffer, size_t size ));
+
+/** Program `size` bytes at `offset`. The area MUST be erased first. Splits
+ *  at page boundaries (WREN + page program + wait WIP each). Returns bytes written. */
+dmod_dmqspi_api(1.0, int, _flash_write, ( dmqspi_flash_t flash, uint32_t offset, const void *buffer, size_t size ));
+
+/** Erase [offset, offset+size); both must be multiples of chip->sector_size (-EINVAL otherwise). */
+dmod_dmqspi_api(1.0, int, _flash_erase, ( dmqspi_flash_t flash, uint32_t offset, size_t size ));
+
+dmod_dmqspi_api(1.0, int, _flash_erase_chip, ( dmqspi_flash_t flash ));
+
+/** Enter/leave memory-mapped mode (XIP window, read only). */
+dmod_dmqspi_api(1.0, int, _flash_set_memory_mapped, ( dmqspi_flash_t flash, bool enable ));
 
 #endif // DMQSPI_H

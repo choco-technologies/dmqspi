@@ -4,7 +4,12 @@ Welcome to the dmqspi module documentation.
 
 ## Contents
 
-- **[api-reference.md](api-reference.md)** - Complete API documentation
+- **[architecture.md](architecture.md)** - layers, block-device contract, flash operations
+- **[tasks.md](tasks.md)** - implementation plan, in order
+- **[port-implementation.md](port-implementation.md)** - QUADSPI register recipe
+- **[configuration.md](configuration.md)** - .ini keys
+- **[flash-chips.md](flash-chips.md)** - supported chips
+- **[api-reference.md](api-reference.md)** - headers overview
 
 ## Quick Reference
 

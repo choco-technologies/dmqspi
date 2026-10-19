@@ -1,29 +1,32 @@
 #define DMOD_ENABLE_REGISTRATION    ON
 #include "dmqspi_port.h"
 #include "dmod.h"
+#include "../stm32_common/stm32_common.h"
 
-/* ---- DMOD lifecycle ---- */
+/*
+ * STM32F7: thin wrapper over src/port/stm32_common. NOT IMPLEMENTED yet:
+ * it must define the dmqspi_stm32_family_t for this family, forward the
+ * IRQ, and (in dmod_init) nothing else - the controller is brought up by
+ * dmqspi_port_init() when the dmqspi driver is created.
+ *
+ *   static const dmqspi_stm32_family_t g_family = {
+ *       .regs_base   = 0xA0001000,
+ *       .mapped_base = 0x90000000,
+ *       .irq         = QUADSPI_IRQn,
+ *       .has_dcache  = true,
+ *   };
+ *
+ *   DMOD_IRQ_HANDLER(QUADSPI_IRQn) { dmqspi_stm32_irq_handler(); }
+ */
 
 int dmod_init(const Dmod_Config_t *Config)
 {
-    Dmod_Printf("dmqspi port module initialized (stm32f7)\n");
+    (void)Config;
+    Dmod_Printf("dmqspi_port (stm32f7): skeleton, not implemented yet\n");
     return 0;
 }
 
 int dmod_deinit(void)
 {
-    Dmod_Printf("dmqspi port module deinitialized (stm32f7)\n");
     return 0;
 }
-
-/* ---- API implementation ----
- *
- * Implement the dmod_dmqspi_port_api_declaration(...) functions
- * declared in include/dmqspi_port.h here. Register an interrupt
- * handler if needed, e.g.:
- *
- *   DMOD_IRQ_HANDLER(SOME_IRQn)
- *   {
- *       // handle interrupt
- *   }
- */
