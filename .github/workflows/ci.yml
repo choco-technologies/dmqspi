@@ -30,6 +30,17 @@ jobs:
           cmake .. -DDMOD_MODE=DMOD_MODULE -DDMOD_TOOLS_NAME=arch/x86_64
           cmake --build . --target dmqspi test_dmqspi
 
+      - name: Build the host stub dmqspi_port (x86_64)
+        run: |
+          # src/port/x86_64 is not a hardware port: a stub so the core module (which requires
+          # dmqspi_port) can be loaded by dmod_loader here. DMOD_CPU_FAMILY=x86_64 alone selects
+          # the host tools (src/port/x86_64/config.cmake).
+          mkdir -p build_port_x86_64
+          cd build_port_x86_64
+          cmake .. -DDMOD_CPU_FAMILY=x86_64
+          cmake --build . --target dmqspi_port
+          cp dmf/dmqspi_port.dmf dmf/dmqspi_port.dmd ../build/dmf/
+
       - name: Verify module files
         run: |
           echo "Checking for module files..."
@@ -42,6 +53,9 @@ jobs:
       - name: Run tests with dmod_loader
         run: |
           export DMOD_DMF_DIR=$(pwd)/build/dmf
+          # Runtime dependencies of dmqspi/test_dmqspi (see build/dmf/*.dmd); dmqspi_port is the
+          # host stub built above - it is never published for x86_64.
+          dmf-get install dmini -y
           dmod_loader build/dmf/test_dmqspi.dmf
 
   discover-cpu-families:
@@ -58,9 +72,11 @@ jobs:
       - name: List available CPU families
         id: list-families
         run: |
-          # Find all CPU families by looking for directories containing port.c
+          # Find all CPU families by looking for directories containing port.c.
+          # x86_64 is the host stub used by the test job above, not a hardware family.
           CPU_FAMILIES=$(find src/port -mindepth 2 -maxdepth 2 -name "port.c" -type f -printf '%h\n' | \
             xargs -n1 basename | \
+            grep -vx x86_64 | \
             sort | \
             jq -R -s -c 'split("\n") | map(select(length > 0))')
 
