@@ -45,11 +45,11 @@ dmod_add_library(${DMOD_MODULE_NAME} ${DMOD_MODULE_VERSION}
 # dmclk_port: peripheral clock enable + the QSPI kernel clock frequency;
 # dmosi: mutex/semaphore for the IRQ-driven transfers; dmdrvi: headers only.
 # One dmod_link_modules() call (each call rewrites the requirements file).
-set(DMQSPI_PORT_MODULES
-    dmclk_port
-    dmosi
-    dmdrvi@>=2.0
-)
+# (the x86_64 host stub needs only the dmdrvi headers; the others are published per stm32 family)
+set(DMQSPI_PORT_MODULES dmdrvi@>=2.0)
+if(DMOD_CPU_FAMILY MATCHES "^stm32")
+    list(APPEND DMQSPI_PORT_MODULES dmclk_port dmosi)
+endif()
 if(DMOD_CPU_FAMILY STREQUAL "stm32f7")
     list(APPEND DMQSPI_PORT_MODULES dmdma@>=0.4)
     target_compile_definitions(${DMOD_MODULE_NAME} PRIVATE DMQSPI_PORT_DMA=1)
