@@ -27,7 +27,10 @@ F4 parts with QUADSPI: F412, F413, F423, F446, F469, F479 (the other F4s have no
    transfer** (or writing CCR when there is no address phase).
 4. Data: read/write `DR` byte-wise (`*(volatile uint8_t*)&DR`) while `SR.FTF`/FIFO level
    permits; short transfers may poll, long ones wait on the IRQ semaphore (FTIE).
-   DMA is an optional later optimisation (dmdma lease API, see dmspi's `stm32_spi_dma.c`).
+   DMA (F7, `stm32_qspi_dma.c`): transfers of 64 B..64 KiB with a 32-byte aligned buffer reachable by DMA2 go through
+   a dmdma lease of DMA2 stream 7 / channel 3 (one request line, both directions), `CR.DMAEN` set before the command is
+   started; the thread sleeps on a semaphore, the D-cache is cleaned/invalidated around the transfer. Anything else, and
+   F4, uses the polled FIFO loop. The stream is leased on first use and released in `_deinit`.
 5. Wait `SR.TCF`, clear it in `FCR.CTCF`. On `SR.TEF` (transfer error) clear `CTEF`, return `-EIO`.
 
 ## `_auto_poll`

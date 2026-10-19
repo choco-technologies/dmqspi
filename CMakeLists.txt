@@ -87,3 +87,9 @@ add_subdirectory(src/port)
 target_link_libraries(${DMOD_MODULE_NAME} ${DMOD_MODULE_NAME}_port_if)
 enable_testing()
 add_subdirectory(tests)
+
+# ======================================================================
+#               qspitest Tool
+# ======================================================================
+# On-board test of the bus node with the N25Q128A (tools/qspitest/main.c).
+add_subdirectory(tools/qspitest)

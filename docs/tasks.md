@@ -8,12 +8,12 @@ Context: STM32F746G-DISCO. Build/flash/test workflow: `dmod-board-debugging` ski
 the dmod-boot repo. Read `docs/architecture.md` and `docs/port-implementation.md` first.
 Host tests (`ctest`) cover pure logic only; the rest is verified on the board.
 
-1. **Port: indirect mode.** `stm32_common.c`: `_init`, `_deinit`, `_command`, `_read`, `_write`;
+1. **Port: indirect mode.** *(DONE and verified on the STM32F746G-DISCO with tools/qspitest: READ ID, auto-poll, 1-line and quad reads, erase, page program, FIFO and DMA paths. F4 compiles but is untested.)* `stm32_common.c`: `_init`, `_deinit`, `_command`, `_read`, `_write`;
    `stm32f7/port.c` (family constants + IRQ). Quick bring-up check: a throw-away call in
    `dmod_init`/driver `_create` that sends READ ID (0x9F, 1 line, 3 data bytes) and logs it.
    Pass: log shows `20 BA 18` (N25Q128A).
 2. **Port: `_auto_poll`.** Pass: WREN (0x06) then poll status 0x05 until WEL==1 (mask 2, match 2).
-3. **Driver `dmqspi.c`.** Per the comment in the file + `docs/configuration.md`.
+3. **Driver `dmqspi.c`** *(DONE; node on the board: `/dev/dmqspix/qspi` - dmdevfs names it <driver>x/<section>; run `qspitest /dev/dmqspix/qspi [--write]`, --write erases the LAST 4 KiB sector).* Per the comment in the file + `docs/configuration.md`.
    Pass: `/dev/dmqspi1` appears; TRANSFER/AUTO_POLL ioctls from a small test tool (like dmspi's `tools/spitest`)
    reproduce steps 1-2. Remove the throw-away code.
 4. **Port: memory-mapped mode** (+ D-cache invalidate). Pass: after the flash module (or a test tool)

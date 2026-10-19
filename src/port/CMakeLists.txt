@@ -25,6 +25,11 @@ if(DMOD_CPU_FAMILY MATCHES "^stm32")
     set(COMMON_SOURCES stm32_common/stm32_common.c)
 endif()
 
+# stm32f7: indirect data by DMA2 stream 7 (stm32_qspi_dma.c) - dmdma 0.4, its lease API
+if(DMOD_CPU_FAMILY STREQUAL "stm32f7")
+    list(APPEND COMMON_SOURCES stm32_common/stm32_qspi_dma.c)
+endif()
+
 #
 #   dmod_add_library - create a library module
 #   it has the same signature as add_library
@@ -40,11 +45,16 @@ dmod_add_library(${DMOD_MODULE_NAME} ${DMOD_MODULE_VERSION}
 # dmclk_port: peripheral clock enable + the QSPI kernel clock frequency;
 # dmosi: mutex/semaphore for the IRQ-driven transfers; dmdrvi: headers only.
 # One dmod_link_modules() call (each call rewrites the requirements file).
-dmod_link_modules(${DMOD_MODULE_NAME}
+set(DMQSPI_PORT_MODULES
     dmclk_port
     dmosi
     dmdrvi@>=2.0
 )
+if(DMOD_CPU_FAMILY STREQUAL "stm32f7")
+    list(APPEND DMQSPI_PORT_MODULES dmdma@>=0.4)
+    target_compile_definitions(${DMOD_MODULE_NAME} PRIVATE DMQSPI_PORT_DMA=1)
+endif()
+dmod_link_modules(${DMOD_MODULE_NAME} ${DMQSPI_PORT_MODULES})
 
 target_include_directories(${DMOD_MODULE_NAME} BEFORE PRIVATE
     ${CMAKE_SOURCE_DIR}/include
