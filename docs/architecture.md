@@ -10,7 +10,7 @@ dmqspi is a **bus** driver (like dmspi, dmi2c), not a flash driver.
         dmdrvi (dmdevfs node)
               |
    +----------+-----------+
-   | dmqspi (this repo)   |   src/dmqspi_driver.c   dmdrvi DIF: create/free/open/close/ioctl/...
+   | dmqspi (this repo)   |   src/dmqspi.c   dmdrvi DIF: create/free/open/close/ioctl/...
    |                      |   src/dmqspi.c          validate_config, module entry
    +----------+-----------+
               |  include/dmqspi_port.h   (generic "send this command" API)

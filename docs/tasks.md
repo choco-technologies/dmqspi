@@ -13,7 +13,7 @@ Host tests (`ctest`) cover pure logic only; the rest is verified on the board.
    `dmod_init`/driver `_create` that sends READ ID (0x9F, 1 line, 3 data bytes) and logs it.
    Pass: log shows `20 BA 18` (N25Q128A).
 2. **Port: `_auto_poll`.** Pass: WREN (0x06) then poll status 0x05 until WEL==1 (mask 2, match 2).
-3. **Driver `dmqspi_driver.c`.** Per the comment in the file + `docs/configuration.md`.
+3. **Driver `dmqspi.c`.** Per the comment in the file + `docs/configuration.md`.
    Pass: `/dev/dmqspi1` appears; TRANSFER/AUTO_POLL ioctls from a small test tool (like dmspi's `tools/spitest`)
    reproduce steps 1-2. Remove the throw-away code.
 4. **Port: memory-mapped mode** (+ D-cache invalidate). Pass: after the flash module (or a test tool)

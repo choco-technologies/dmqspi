@@ -14,5 +14,5 @@ same `friends_group`, see `configs/board/stm32f746g-disco/qspi.ini`).
 | `sample_shift_half` | 0 \| 1 | 1 | Sample half a cycle later (needed above ~40 MHz) |
 
 Unknown keys: log a warning, do not fail. Missing `flash_size`: fail `_create`.
-Parsing lives in `src/dmqspi_driver.c`; the result must pass
+Parsing lives in `src/dmqspi.c`; the result must pass
 `dmqspi_validate_config()` (implemented, unit tested).
