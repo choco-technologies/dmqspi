@@ -7,8 +7,8 @@
 #include "dmdrvi_ioctl.h"
 
 /*
- * Types shared by the dmqspi core (flash-chip layer + dmdrvi driver) and the
- * dmqspi_port (QUADSPI controller). See docs/architecture.md.
+ * Types shared by the dmqspi core (dmdrvi bus driver) and the
+ * dmqspi_port (QUADSPI controller). The bus is chip-agnostic. See docs/architecture.md.
  */
 
 /** QUADSPI controller instance (1-based; every supported STM32 has only 1). */
@@ -69,7 +69,7 @@ typedef struct
     dmqspi_instance_t   instance;           /**< 1 */
     dmqspi_bank_t       bank;
     uint32_t            clock_hz;           /**< Requested CLK (port picks prescaler <= this) */
-    uint32_t            flash_size_bytes;   /**< Power of 2; port programs FSIZE = log2(size)-1 */
+    uint32_t            flash_size_bytes;   /**< Addressable window of the attached device (power of 2; FSIZE = log2-1) */
     uint8_t             cs_high_cycles;     /**< Min CS high time between commands (1..8) */
     uint8_t             clock_mode;         /**< 0 = CLK low when idle (mode 0), 3 = high */
     uint8_t             sample_shift_half;  /**< 1 = sample half a cycle later (SSHIFT) */
@@ -90,33 +90,41 @@ typedef struct
     uint32_t timeout_ms;
 } dmqspi_poll_t;
 
-/** Identification returned by READ ID (0x9F). */
+/** Direction of the data phase in an ioctl transfer. */
+typedef enum
+{
+    dmqspi_dir_none = 0,    /**< No data phase (cmd.data_lines must be none) */
+    dmqspi_dir_read,        /**< Controller reads cmd.data_size bytes into `data` */
+    dmqspi_dir_write,       /**< Controller writes cmd.data_size bytes from `data` */
+} dmqspi_dir_t;
+
+/** Argument of DMQSPI_IOCTL_TRANSFER: one command + its data buffer. */
 typedef struct
 {
-    uint8_t manufacturer;   /**< 0x20 = Micron */
-    uint8_t memory_type;    /**< 0xBA = 3V N25Q */
-    uint8_t capacity;       /**< 0x18 = 128 Mbit */
-} dmqspi_jedec_id_t;
+    dmqspi_command_t    cmd;
+    dmqspi_dir_t        dir;
+    void               *data;       /**< cmd.data_size bytes; ignored for dir_none */
+} dmqspi_transfer_t;
 
-/**
- * Geometry + command set of one flash chip. The table of known chips lives
- * in src/dmqspi_chips.c (TODO); unknown JEDEC IDs fall back to SFDP.
+/** Argument of DMQSPI_IOCTL_AUTO_POLL: repeat `cmd` (status read) until the match. */
+typedef struct
+{
+    dmqspi_command_t    cmd;
+    dmqspi_poll_t       poll;
+} dmqspi_auto_poll_t;
+
+/*
+ * Ioctl commands of the bus node /dev/dmqspi<N> (numbered from
+ * DMDRVI_IOCTL_CUSTOM_BASE). They are the whole user-visible interface: the
+ * bus knows nothing about what sits on it. A flash-chip driver (separate
+ * module, e.g. dmnorflash) is a client of these.
  */
-typedef struct
-{
-    char                name[16];           /**< "N25Q128A" (array, not a pointer: a module cannot hold relocated const data) */
-    dmqspi_jedec_id_t   id;
-    uint32_t            size_bytes;         /**< 16 MiB */
-    uint32_t            page_size;          /**< 256 */
-    uint32_t            sector_size;        /**< 4096 - the erase unit exposed as erase_block_size */
-    uint8_t             read_dummy_cycles;  /**< For the quad fast-read command */
-    bool                needs_quad_enable;  /**< Must set quad bit in a config register */
-} dmqspi_chip_t;
-
-/** Driver-specific ioctl commands (numbered from DMDRVI_IOCTL_CUSTOM_BASE). */
-#define DMQSPI_IOCTL_GET_JEDEC_ID       (DMDRVI_IOCTL_CUSTOM_BASE + 0)  /**< arg: dmqspi_jedec_id_t* */
-#define DMQSPI_IOCTL_SET_MEMORY_MAPPED  (DMDRVI_IOCTL_CUSTOM_BASE + 1)  /**< arg: const bool* (true = enter XIP) */
-#define DMQSPI_IOCTL_GET_MAPPED_BASE    (DMDRVI_IOCTL_CUSTOM_BASE + 2)  /**< arg: uintptr_t* (0x90000000 on STM32) */
-#define DMQSPI_IOCTL_ERASE_CHIP         (DMDRVI_IOCTL_CUSTOM_BASE + 3)  /**< arg: none */
+#define DMQSPI_IOCTL_TRANSFER           (DMDRVI_IOCTL_CUSTOM_BASE + 0)  /**< arg: dmqspi_transfer_t* */
+#define DMQSPI_IOCTL_AUTO_POLL          (DMDRVI_IOCTL_CUSTOM_BASE + 1)  /**< arg: dmqspi_auto_poll_t* */
+#define DMQSPI_IOCTL_ENTER_MAPPED       (DMDRVI_IOCTL_CUSTOM_BASE + 2)  /**< arg: const dmqspi_command_t* (read cmd) */
+#define DMQSPI_IOCTL_EXIT_MAPPED        (DMDRVI_IOCTL_CUSTOM_BASE + 3)  /**< arg: none */
+#define DMQSPI_IOCTL_GET_MAPPED_BASE    (DMDRVI_IOCTL_CUSTOM_BASE + 4)  /**< arg: uintptr_t* (0x90000000 on STM32) */
+#define DMQSPI_IOCTL_GET_MODE           (DMDRVI_IOCTL_CUSTOM_BASE + 5)  /**< arg: dmqspi_mode_t* */
+#define DMQSPI_IOCTL_INVALIDATE_MAPPED  (DMDRVI_IOCTL_CUSTOM_BASE + 6)  /**< arg: const uint32_t[2] {offset, size} */
 
 #endif // DMQSPI_TYPES_H

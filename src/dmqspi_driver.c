@@ -2,24 +2,23 @@
 #include "dmdrvi.h"
 #include "dmini.h"
 #include "dmqspi.h"
+#include "dmqspi_port.h"
 
 /*
- * dmdrvi driver skeleton ("driver_name=dmqspi" in the board .ini). NOT
- * IMPLEMENTED. Copy the structure of dmspi/src/dmspi.c (create/free/open/
- * close/read/write/ioctl/flush/stat) and of dmsdio/src/dmsdio.c (block
- * ioctls). What each function must do is in docs/architecture.md; the .ini
- * keys are in docs/configuration.md. Summary:
+ * dmdrvi bus driver skeleton ("driver_name=dmqspi" in the board .ini). NOT
+ * IMPLEMENTED. Copy the structure of dmspi/src/dmspi.c. Summary:
  *
- *   _create   : read [section] keys -> dmqspi_config_t, dmqspi_validate_config,
- *               dmqspi_flash_open; dev_num = { major from dmdevfs, minor = instance }.
+ *   _create   : read [section] keys (docs/configuration.md) -> dmqspi_config_t,
+ *               dmqspi_validate_config, dmqspi_port_init; dev_num minor = instance.
  *               The node appears as /dev/dmqspi<instance>.
- *   _read     : dmqspi_flash_read(offset, buf, size)  (offset = byte offset)
- *   _write    : dmqspi_flash_write - caller erased first (block-device contract)
- *   _ioctl    : DMDRVI_IOCTL_BLOCK_GET_INFO  -> logical_block_size = 512 (or page),
- *                  erase_block_size = chip->sector_size, block_count, flags =
- *                  DMDRVI_BLOCK_FLAG_ERASE_SUPPORTED;
- *               DMDRVI_IOCTL_BLOCK_ERASE -> dmqspi_flash_erase;
- *               DMQSPI_IOCTL_* (see dmqspi_types.h).
- *   _flush    : nothing (writes complete before returning)
- *   _free     : dmqspi_flash_close, free the context
+ *   _free     : dmqspi_port_deinit, free the context
+ *   _open/_close/_flush/_stat : trivial (one exclusive-or-shared handle, no state)
+ *   _read/_write : not supported (-ENOTSUP) - the bus has no byte stream; use ioctl.
+ *               (Optional later: _read at offset = memory-mapped read.)
+ *   _ioctl    : DMQSPI_IOCTL_TRANSFER      -> dmqspi_port_command / _read / _write
+ *               DMQSPI_IOCTL_AUTO_POLL     -> dmqspi_port_auto_poll
+ *               DMQSPI_IOCTL_ENTER_MAPPED  -> dmqspi_port_enter_memory_mapped
+ *               DMQSPI_IOCTL_EXIT_MAPPED   -> dmqspi_port_exit_memory_mapped
+ *               DMQSPI_IOCTL_GET_MAPPED_BASE / GET_MODE / INVALIDATE_MAPPED -> port getters
+ *               Validate every pointer; copy nothing - the buffers belong to the caller.
  */

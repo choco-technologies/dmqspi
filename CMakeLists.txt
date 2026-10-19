@@ -65,8 +65,6 @@ set(DMOD_DIF_IMPLS          )
 dmod_add_library(${DMOD_MODULE_NAME} ${DMOD_MODULE_VERSION}
     # List of source files - can include C and C++ files
     src/dmqspi.c
-    src/dmqspi_flash.c
-    src/dmqspi_chips.c
     src/dmqspi_driver.c
 )
 
@@ -78,7 +76,7 @@ target_include_directories(${DMOD_MODULE_NAME}_if INTERFACE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
 
-# dmdrvi: the driver interface (block-device ioctls); dmini: .ini parsing;
+# dmdrvi: the driver interface; dmini: .ini parsing;
 # dmosi: locks. The controller itself is reached through dmqspi_port (below).
 dmod_link_modules(${DMOD_MODULE_NAME}
     dmdrvi@>=2.0

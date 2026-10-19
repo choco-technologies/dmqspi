@@ -3,15 +3,12 @@
 #include "dmqspi.h"
 
 /*
- * Module entry + configuration helpers. The two big pieces live elsewhere:
- *   src/dmqspi_flash.c  - flash-chip layer (public API in include/dmqspi.h)
- *   src/dmqspi_driver.c - dmdrvi driver ("dmqspi" in the .ini) exposing the
- *                         block-device node
- * See docs/architecture.md and docs/tasks.md.
+ * Module entry + configuration helpers. The dmdrvi bus driver ("dmqspi" in
+ * the .ini) is src/dmqspi_driver.c. See docs/architecture.md, docs/tasks.md.
  */
 
 /* Module state (also guarantees the module has a data section, which the dmod
- * packer requires). TODO: hold the opened flash handles here. */
+ * packer requires). TODO: hold the bus contexts here. */
 static int g_dmqspi_ref_count = 1;
 
 dmod_dmqspi_api_declaration(1.0, bool, _validate_config, ( const dmqspi_config_t *config ))

@@ -7,8 +7,8 @@
 
 /*
  * Port API = the QUADSPI *controller* only. It knows nothing about flash
- * chips: no opcodes, no JEDEC, no page sizes (that is the core's job, see
- * src/dmqspi_flash.c). All functions return 0 on success or a negative
+ * chips: no opcodes, no JEDEC ids, no page sizes (that is a flash-chip
+ * module's job, above the dmqspi bus node). All functions return 0 on success or a negative
  * errno-style value (-EINVAL, -EBUSY, -ETIMEDOUT, -EIO, -ENOTSUP).
  *
  * Each declaration needs a definition written with

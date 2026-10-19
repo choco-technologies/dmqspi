@@ -7,16 +7,20 @@ dmqspi - QUADSPI (external NOR flash) driver for DMOD. **Status: skeleton** - in
 
 ## Description
 
-dmqspi exposes an external quad-SPI NOR flash (first target: the Micron
-N25Q128A, 16 MB, on the STM32F746G-DISCO) as a **dmdrvi block device**
-`/dev/dmqspi<N>` with read, write and erase, plus an optional memory-mapped
-(XIP) window at 0x90000000.
+dmqspi is the **QUADSPI bus** driver: it exposes the controller as a dmdrvi
+node `/dev/dmqspi<N>` on which a client sends commands (instruction / address /
+alternate / dummy / data phases on 1, 2 or 4 lines), auto-polls a status
+register, and switches on a memory-mapped window (0x90000000 on STM32). It is
+chip-agnostic - like dmspi it knows nothing about what is attached. Flash
+chips (e.g. the N25Q128A on the STM32F746G-DISCO) are handled by a **separate
+module** (e.g. `dmnorflash`, own repo) that is a client of this bus and
+exports the block device.
 
 Two modules, same driver+port split as dmspi/dmsdio:
 
 | Module | Contains | Hardware knowledge |
 | --- | --- | --- |
-| `dmqspi` | dmdrvi driver, flash-chip layer (JEDEC ID, quad enable, page program, sector erase), chip table | none - speaks only to `dmqspi_port` |
+| `dmqspi` | dmdrvi bus driver, .ini parsing, ioctl dispatch | none - speaks only to `dmqspi_port` |
 | `dmqspi_port` | QUADSPI controller: send a command, move data, auto-poll, memory-mapped mode | `src/port/stm32_common` (shared), `stm32f4`, `stm32f7` |
 
 Start with [docs/architecture.md](docs/architecture.md); the implementation

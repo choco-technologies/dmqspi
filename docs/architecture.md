@@ -1,14 +1,17 @@
 # dmqspi architecture
 
+dmqspi is a **bus** driver (like dmspi, dmi2c), not a flash driver.
+
 ```
  littlefs / FAT / automount / shell
-              |  open/read/write/ioctl on /dev/dmqspi1
+              |  block device /dev/dmnorflash0         <- separate module (own repo)
+        dmnorflash: JEDEC id, chip table, quad enable, page program, erase
+              |  ioctl on /dev/dmqspi1  (DMQSPI_IOCTL_*)
         dmdrvi (dmdevfs node)
               |
    +----------+-----------+
-   | dmqspi (core)        |   src/dmqspi_driver.c   dmdrvi DIF: create/free/open/close/read/write/ioctl/flush/stat
-   |                      |   src/dmqspi_flash.c    flash-chip layer: open, read, write(page split), erase, XIP
-   |                      |   src/dmqspi_chips.c    table of known chips (JEDEC ID -> geometry)
+   | dmqspi (this repo)   |   src/dmqspi_driver.c   dmdrvi DIF: create/free/open/close/ioctl/...
+   |                      |   src/dmqspi.c          validate_config, module entry
    +----------+-----------+
               |  include/dmqspi_port.h   (generic "send this command" API)
    +----------+-----------+
@@ -19,58 +22,38 @@
            hardware
 ```
 
-**Rule:** the core never touches a register; the port never knows an opcode.
-A new chip = a row in `dmqspi_chips.c`. A new MCU = a new `src/port/<family>`.
+**Rule:** neither module here knows an opcode, a JEDEC id or a page size.
+A new chip = a row in the *flash module*. A new MCU = a new `src/port/<family>`.
 
 ## Pins
 
-Pins are NOT configured by dmqspi. The board `.ini` lists each pin as a
-`dmgpio` friend (alternate function) in the same `friends_group` as the
-`[qspi]` section - exactly like `dmspi` (see `configs/board/stm32f746g-disco/qspi.ini`).
-The port only enables the QUADSPI clock (through `dmclk_port`) and programs the
-controller.
+Not configured by dmqspi. The board `.ini` lists each pin as a `dmgpio`
+friend (alternate function) in the same `friends_group` as the `[qspi]`
+section - exactly like dmspi (`configs/board/stm32f746g-disco/qspi.ini`).
+The port only enables the QUADSPI clock (via `dmclk_port`) and programs the controller.
 
-## Block-device contract (what the dmdrvi node does)
+## Bus node contract
 
-Offsets are **bytes**. NOR flash differs from an SD card: a write can only
-clear bits, so the area must be erased before it is written.
+`/dev/dmqspi<instance>`; `_read`/`_write` are not supported (`-ENOTSUP`) - there
+is no byte stream, only commands. Everything goes through ioctl
+(`dmqspi_types.h`):
 
-| dmdrvi call | Behaviour |
-| --- | --- |
-| `_read(buf, size, offset)` | `dmqspi_flash_read` - any alignment, any size |
-| `_write(buf, size, offset)` | `dmqspi_flash_write` - area must be erased; returns `-EIO` if the chip flags a program error. Does not erase for the caller |
-| `_ioctl(DMDRVI_IOCTL_BLOCK_GET_INFO)` | `logical_block_size = 512`, `erase_block_size = chip->sector_size` (4096), `block_count = size/512`, `flags = DMDRVI_BLOCK_FLAG_ERASE_SUPPORTED` |
-| `_ioctl(DMDRVI_IOCTL_BLOCK_ERASE)` | `dmqspi_flash_erase` (range must be sector aligned, else `-EINVAL`) |
-| `_ioctl(DMQSPI_IOCTL_*)` | JEDEC ID, memory-mapped on/off, mapped base, chip erase (`dmqspi_types.h`) |
-| `_flush` | no-op (writes finish before returning) |
+| ioctl | arg | Does |
+| --- | --- | --- |
+| `DMQSPI_IOCTL_TRANSFER` | `dmqspi_transfer_t*` | one command with optional read/write data phase (`dir`) |
+| `DMQSPI_IOCTL_AUTO_POLL` | `dmqspi_auto_poll_t*` | hardware status polling until `(status & mask) == match` or timeout |
+| `DMQSPI_IOCTL_ENTER_MAPPED` / `_EXIT_MAPPED` | read command / none | memory-mapped window on/off |
+| `DMQSPI_IOCTL_GET_MAPPED_BASE`, `_GET_MODE`, `_INVALIDATE_MAPPED` | see header | helpers for the XIP window and D-cache |
 
-Concurrency: a dmosi mutex in the port makes each command atomic. The core
-holds its own mutex over a whole read/write/erase so two threads cannot
-interleave a WREN with another thread's command.
+Concurrency: one command (including its data phase) is atomic - a dmosi mutex
+in the port. A multi-command sequence (WREN + program + poll) is the client's
+problem: the flash module serializes its own callers. While memory-mapped,
+indirect ioctls return `-EBUSY`.
 
-## Flash operations (core, using only the port API)
+## What the flash module needs from this bus (for reference)
 
-All commands are `dmqspi_command_t`; opcodes are in `dmqspi_flash_cmds.h`.
-
-* **open:** `port_init` -> reset (0x66, 0x99, wait ~30 us) -> READ ID 0x9F on 1 line
-  -> look up `g_dmqspi_chips` (not found: `-ENODEV`; SFDP fallback is optional) ->
-  enable quad / set dummy cycles (Micron: volatile config reg 0x81, enh. volatile 0x61).
-* **read:** one 0xEB (quad IO fast read) command; address 24 bit on 4 lines, alternate
-  byte 0xFF on 4 lines, `dummy_cycles` from the chip row, data on 4 lines. The controller
-  streams any length - no page limit.
-* **write:** for each chunk not crossing a 256 B page boundary: WREN (0x06),
-  page program (0x32 quad or 0x02), then `auto_poll` of status 0x05 until WIP=0
-  (Micron: also check flag status 0x70 for program error, clear with 0x50).
-* **erase:** per 4 KB sector: WREN, 0x20, auto_poll WIP=0 (timeout 400 ms; worst case
-  from datasheet). Aligned 64 KB runs may use 0xD8.
-* **memory-mapped:** `port_enter_memory_mapped` with the same 0xEB read command. While
-  mapped, indirect operations first call `_exit_memory_mapped` (the core re-enters it
-  afterwards if it was on). After a write/erase the D-cache lines of the window must be
-  invalidated (`port_invalidate_mapped`).
-
-## Why a block device and not "mtd"
-
-dmdrvi already has block ioctls including ERASE (dmdrvi >= 2.x), automount and
-`blkid` already understand block nodes, and a file system with wear levelling
-(littlefs, separate module `dmlfs`, later) sits on top using exactly
-read/write/erase. No new interface is needed.
+Everything it does maps onto the three primitives: `TRANSFER` (READ ID 0x9F,
+WREN 0x06, quad enable, page program, sector erase, quad fast read 0xEB),
+`AUTO_POLL` (status WIP=0 after program/erase) and `ENTER_MAPPED` (XIP). It
+exports `DMDRVI_IOCTL_BLOCK_*` (dmdrvi already has GET_INFO/ERASE) so that
+automount, blkid and a file system with wear levelling (littlefs, later) work on top.

@@ -7,7 +7,7 @@
  * Shared QUADSPI controller implementation. NOT IMPLEMENTED - every function
  * is a stub returning -ENOSYS (they exist so the port module links).
  * Per-function register recipe: docs/port-implementation.md. Start with
- * _init, _command and _read (enough to read the JEDEC ID), then
+ * _init, _command and _read (enough to send a command and read back data), then
  * _write/_auto_poll, then memory-mapped (docs/tasks.md, steps 1-3 and 6).
  * Registration (DMOD_ENABLE_REGISTRATION) is defined only in the family's port.c.
  */
