@@ -200,6 +200,43 @@ static void test_write(void *fp, uint8_t *buf, uint8_t *buf2)
           "programmed sector reads back by quad I/O");
 }
 
+/* qspitest <node> --blank <offset> <size>: counts the bytes that are not 0xFF (an erased region is blank) */
+static int run_blank_check(void *fp, uint32_t offset, uint32_t size)
+{
+    uint8_t *raw = Dmod_Malloc(SECTOR_SIZE + 64);
+    if (raw == NULL)
+        return 1;
+    uint8_t *buf = (uint8_t *)(((uintptr_t)raw + 31u) & ~(uintptr_t)31u);
+    uint32_t dirty = 0;
+    for (uint32_t at = 0; at < size; at += SECTOR_SIZE)
+    {
+        if (read_flash(fp, offset + at, buf, SECTOR_SIZE, false) != 0)
+        {
+            Dmod_Free(raw);
+            return 1;
+        }
+        for (uint32_t i = 0; i < SECTOR_SIZE; i++)
+            dirty += (buf[i] != 0xFF);
+    }
+    Dmod_Printf("blank check of 0x%x + 0x%x: %u byte(s) differ from 0xFF\n", (unsigned)offset, (unsigned)size, (unsigned)dirty);
+    Dmod_Free(raw);
+    return 0;
+}
+
+static uint32_t parse_number(const char *text)
+{
+    uint32_t v = 0;
+    if (text[0] == '0' && (text[1] == 'x' || text[1] == 'X'))
+    {
+        for (text += 2; *text != '\0'; text++)
+            v = v * 16u + (uint32_t)((*text <= '9') ? *text - '0' : (*text | 0x20) - 'a' + 10);
+        return v;
+    }
+    for (; *text != '\0'; text++)
+        v = v * 10u + (uint32_t)(*text - '0');
+    return v;
+}
+
 int main(int argc, char *argv[])
 {
     if (argc < 2)
@@ -214,6 +251,12 @@ int main(int argc, char *argv[])
         return 1;
     }
     /* 32-byte aligned buffers so the DMA path is used (see stm32_qspi_dma.c) */
+    if (argc >= 5 && strcmp(argv[2], "--blank") == 0)
+    {
+        int blank = run_blank_check(fp, parse_number(argv[3]), parse_number(argv[4]));
+        Dmod_FileClose(fp);
+        return blank;
+    }
     uint8_t *raw = Dmod_Malloc(2 * SECTOR_SIZE + 64);
     if (raw == NULL)
     {
