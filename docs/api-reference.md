@@ -1,12 +1,8 @@
-# dmqspi API Reference
+# API reference
 
-Document the module's public types and functions here as you add them to
-`include/dmqspi.h`.
+* `include/dmqspi.h` - `dmqspi_validate_config` only. Clients use the bus node `/dev/dmqspi<N>` through the `DMQSPI_IOCTL_*` commands (docs/architecture.md).
+* `include/dmqspi_port.h` - controller API implemented by `dmqspi_port`.
+* `include/dmqspi_types.h` - command descriptor, config, transfer structs, ioctl numbers.
 
-## Types
-
-_(none yet)_
-
-## Functions
-
-_(none yet)_
+Return convention everywhere: `0` / byte count on success, negative errno on failure.
+Every declaration carries its doc comment in the header - read those first.

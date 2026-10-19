@@ -6,46 +6,20 @@
 #include <stddef.h>
 #include "dmod_types.h"
 #include "dmqspi_defs.h"
+#include "dmqspi_types.h"
 
-/**
- * Public API for the dmqspi module.
+/*
+ * dmqspi = the QUADSPI *bus* driver. It owns the controller and exposes it
+ * as a dmdrvi node /dev/dmqspi<N> driven through the DMQSPI_IOCTL_* commands
+ * of dmqspi_types.h (send a command with optional data, auto-poll a status
+ * register, memory-mapped mode). It does not know flash chips, opcodes or
+ * block devices - that is a separate module on top (e.g. dmnorflash),
+ * exactly as dmsdio/dmspi relate to what is attached to them.
  *
- * Functions are declared with the dmod_dmqspi_api(...) macro - dmod's
- * standard pattern for functions callable from other modules (or from this
- * module's own tests/), resolved dynamically by the loader rather than
- * through normal static linkage. See dm_sw_ring/include/dm_sw_ring.h for a
- * fully worked real-world example of the same shape.
- *
- * Definitions in src/dmqspi.c use the matching
- * dmod_dmqspi_api_declaration(...) macro - a plain C function
- * definition here will NOT satisfy these declarations at link time.
- *
- * This is an example interface using the usual "opaque handle" pattern -
- * replace the handle, functions, and struct definition in
- * src/dmqspi.c with your module's real API.
+ * The only function exported here is a pure helper, usable in host tests.
  */
 
-/* Opaque handle - the real struct is defined in src/dmqspi.c */
-typedef struct dmqspi* dmqspi_t;
-
-/**
- * Create a new dmqspi instance.
- *
- * @return A valid handle on success, or NULL on allocation failure.
- */
-dmod_dmqspi_api(1.0, dmqspi_t, _create, ( void ));
-
-/**
- * Destroy an instance created by dmqspi_create(). Safe to call with
- * NULL.
- */
-dmod_dmqspi_api(1.0, void, _destroy, ( dmqspi_t handle ));
-
-/**
- * Example accessor - replace with your module's real API.
- *
- * @return true if handle is a valid, non-NULL instance.
- */
-dmod_dmqspi_api(1.0, bool, _is_valid, ( dmqspi_t handle ));
+/** Check a configuration without touching hardware. */
+dmod_dmqspi_api(1.0, bool, _validate_config, ( const dmqspi_config_t *config ));
 
 #endif // DMQSPI_H
