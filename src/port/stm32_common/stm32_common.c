@@ -45,7 +45,12 @@ typedef struct
 #define RCC_AHB3ENR     (*(volatile uint32_t *)(RCC_BASE + 0x38))
 #define RCC_CFGR        (*(volatile uint32_t *)(RCC_BASE + 0x08))
 #define RCC_QSPI_BIT    (1u << 1)
-#define SPIN_LIMIT      4000000u
+/* Waits are bounded by time (the RTOS tick); the spin count only ends them when the tick does not run -
+ * before the scheduler starts. */
+#define SPIN_LIMIT          4000000u
+#define IDLE_TIMEOUT_MS     2u      /* BUSY at the start of a command: nothing of ours is running, so it is a leftover */
+#define ABORT_TIMEOUT_MS    20u     /* the controller to let go after CR.ABORT */
+#define FLAG_TIMEOUT_MS     200u    /* a flag or a byte of the FIFO the flash is expected to produce */
 
 static struct
 {
@@ -122,10 +127,31 @@ static uint32_t build_ccr(const dmqspi_command_t *c, uint32_t fmode)
     return ccr;
 }
 
+/* A wait in progress: when it started (RTOS tick) and how many times it looked. */
+typedef struct
+{
+    uint32_t start;
+    uint32_t spins;
+} wait_t;
+
+static wait_t wait_begin(void)
+{
+    wait_t w = { dmosi_get_tick_count(), 0 };
+    return w;
+}
+
+/* True when a wait of @p timeout_ms is over. The tick is read only now and then. */
+static bool wait_expired(wait_t *w, uint32_t timeout_ms)
+{
+    if ((++w->spins & 63u) != 0u)
+        return false;
+    return w->spins >= SPIN_LIMIT || (uint32_t)(dmosi_get_tick_count() - w->start) > timeout_ms;
+}
+
 static int wait_flag(uint32_t flag)
 {
     qspi_regs_t *q = regs();
-    for (uint32_t i = 0; i < SPIN_LIMIT; i++)
+    for (wait_t w = wait_begin(); !wait_expired(&w, FLAG_TIMEOUT_MS); )
     {
         uint32_t sr = q->SR;
         if (sr & SR_TEF) { q->FCR = FCR_CTEF; return -EIO; }
@@ -134,21 +160,93 @@ static int wait_flag(uint32_t flag)
     return -ETIMEDOUT;
 }
 
-static int wait_not_busy(void)
+static bool wait_idle(uint32_t timeout_ms)
 {
     qspi_regs_t *q = regs();
-    for (uint32_t i = 0; i < SPIN_LIMIT; i++)
-        if (!(q->SR & SR_BUSY)) return 0;
-    return -ETIMEDOUT;
+    for (wait_t w = wait_begin(); ; )
+    {
+        if (!(q->SR & SR_BUSY)) return true;
+        if (wait_expired(&w, timeout_ms)) return false;
+    }
+}
+
+static int wait_not_busy(void)
+{
+    return wait_idle(FLAG_TIMEOUT_MS) ? 0 : -ETIMEDOUT;
+}
+
+/* Program the controller: pulse its reset, then clock, bank and flash size from @p config. */
+static void configure_controller(const dmqspi_config_t *config)
+{
+    RCC_AHB3ENR |= RCC_QSPI_BIT;
+    RCC_AHB3RSTR |= RCC_QSPI_BIT;
+    RCC_AHB3RSTR &= ~RCC_QSPI_BIT;
+    uint32_t kclk = kernel_clock_hz();
+    uint32_t presc = kclk == 0 ? 255u : (kclk + config->clock_hz - 1u) / config->clock_hz - 1u;
+    if (presc > 255u) presc = 255u;
+    qspi_regs_t *q = regs();
+    q->DCR = (config->clock_mode ? 1u : 0u) | ((uint32_t)(config->cs_high_cycles - 1u) << 8) |
+             ((log2_floor(config->flash_size_bytes) - 1u) << 16);
+    q->CR = (presc << CR_PRESC_POS) | (config->sample_shift_half ? CR_SSHIFT : 0u) |
+            (config->bank == dmqspi_bank_2 ? CR_FSEL : 0u) | CR_EN;
+}
+
+/* Take what an indirect read left in the FIFO out of it, so that a held-up transfer can end. */
+static void drain_fifo(void)
+{
+    qspi_regs_t *q = regs();
+    for (uint32_t i = 0; i < 64u && SR_FLEVEL(q->SR) != 0u; i++)
+        (void)*(volatile uint8_t *)&q->DR;
+}
+
+/*
+ * Bring the controller back to idle, whatever it is doing: stop the DMA, abort, and when it does not let go (a
+ * read stalls on a full FIFO nobody empties) empty the FIFO and abort again; as the last resort reset the
+ * peripheral. Called with the lock held - no transfer of ours is going on - and in indirect mode.
+ * @return 0, or -EIO when even the reset did not help.
+ */
+static int recover(void)
+{
+    qspi_regs_t *q = regs();
+    uint32_t sr = q->SR, cr = q->CR, ccr = q->CCR;
+    unsigned stage = 1;
+
+    dmqspi_stm32_dma_cancel();
+    q->CR &= ~CR_DMAEN;
+    q->CR |= CR_ABORT;
+    if (!wait_idle(ABORT_TIMEOUT_MS))
+    {
+        stage = 2;
+        drain_fifo();
+        q->CR |= CR_ABORT;
+        if (!wait_idle(ABORT_TIMEOUT_MS))
+        {
+            stage = 3;
+            configure_controller(&g_q.config);
+            if (!wait_idle(ABORT_TIMEOUT_MS))
+                stage = 4;
+        }
+    }
+    q->FCR = FCR_CTEF | FCR_CTCF | FCR_CSMF;
+    if (stage > 1)
+    {
+        DMOD_LOG_WARN("dmqspi_port: the controller held on to a transfer (SR=0x%x CR=0x%x CCR=0x%x) - %s\n",
+                      (unsigned)sr, (unsigned)cr, (unsigned)ccr,
+                      stage == 2 ? "let go after the FIFO was emptied" :
+                      stage == 3 ? "reset" : "NOT recovered, even by a reset");
+    }
+    else
+    {
+        DMOD_LOG_INFO("dmqspi_port: aborted a transfer left behind (SR=0x%x CR=0x%x CCR=0x%x)\n",
+                      (unsigned)sr, (unsigned)cr, (unsigned)ccr);
+    }
+    return stage == 4 ? -EIO : 0;
 }
 
 /* Abort the current transfer and wait for the controller to go idle. */
 static void abort_transfer(void)
 {
-    qspi_regs_t *q = regs();
-    q->CR |= CR_ABORT;
-    (void)wait_not_busy();
-    q->FCR = FCR_CTEF | FCR_CTCF | FCR_CSMF;
+    (void)recover();
 }
 
 /* Program DLR/ABR/CCR. Without an address phase this write also starts the transfer. */
@@ -184,7 +282,8 @@ static int begin(dmqspi_instance_t instance)
         dmosi_mutex_unlock(g_q.lock);
         return -EBUSY;
     }
-    if (wait_not_busy() != 0)
+    /* With the lock taken no transfer of ours is running, so a busy controller was left behind. */
+    if (!wait_idle(IDLE_TIMEOUT_MS) && recover() != 0)
     {
         dmosi_mutex_unlock(g_q.lock);
         return -EBUSY;
@@ -202,17 +301,22 @@ static int read_data(uint8_t *out, uint32_t size)
 {
     qspi_regs_t *q = regs();
     uint32_t got = 0;
-    for (uint32_t spin = 0; got < size && spin < SPIN_LIMIT; )
+    wait_t w = wait_begin();
+    while (got < size)
     {
         uint32_t sr = q->SR;
         if (sr & SR_TEF) { q->FCR = FCR_CTEF; return -EIO; }
         uint32_t level = SR_FLEVEL(sr);
-        if (level == 0) { spin++; continue; }
-        spin = 0;
+        if (level == 0)
+        {
+            if (wait_expired(&w, FLAG_TIMEOUT_MS)) return -ETIMEDOUT;
+            continue;
+        }
+        w = wait_begin();           /* the flash is delivering: the wait starts again */
         while (level-- && got < size)
             out[got++] = *(volatile uint8_t *)&q->DR;
     }
-    return got == size ? 0 : -ETIMEDOUT;
+    return 0;
 }
 
 static int write_data(const uint8_t *in, uint32_t size)
@@ -310,17 +414,7 @@ dmod_dmqspi_port_api_declaration(1.0, int, _init, ( const dmqspi_config_t *confi
     g_q.lock = dmosi_mutex_create(false);
     g_q.irq_sem = dmosi_semaphore_create(0, 1);
     if (g_q.lock == NULL || g_q.irq_sem == NULL) return -ENOMEM;
-    RCC_AHB3ENR |= RCC_QSPI_BIT;
-    RCC_AHB3RSTR |= RCC_QSPI_BIT;
-    RCC_AHB3RSTR &= ~RCC_QSPI_BIT;
-    uint32_t kclk = kernel_clock_hz();
-    uint32_t presc = kclk == 0 ? 255u : (kclk + config->clock_hz - 1u) / config->clock_hz - 1u;
-    if (presc > 255u) presc = 255u;
-    qspi_regs_t *q = regs();
-    q->DCR = (config->clock_mode ? 1u : 0u) | ((uint32_t)(config->cs_high_cycles - 1u) << 8) |
-             ((log2_floor(config->flash_size_bytes) - 1u) << 16);
-    q->CR = (presc << CR_PRESC_POS) | (config->sample_shift_half ? CR_SSHIFT : 0u) |
-            (config->bank == dmqspi_bank_2 ? CR_FSEL : 0u) | CR_EN;
+    configure_controller(config);
     g_q.config = *config;
     g_q.mode = dmqspi_mode_indirect;
     g_q.ready = true;

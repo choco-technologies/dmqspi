@@ -31,15 +31,18 @@ void dmqspi_stm32_irq_handler(void);
  * DMA hooks (stm32_qspi_dma.c, built only with DMQSPI_PORT_DMA - F7 with dmdma).
  * dma_start: 0 = stream running, 1 = not used (the caller moves the bytes), <0 = error.
  * dma_wait: sleeps until the transfer ends; also stops the stream and fixes the D-cache.
+ * dma_cancel: stops the stream whatever it is doing (recovering the controller).
  */
 #ifdef DMQSPI_PORT_DMA
 int  dmqspi_stm32_dma_start(bool read, void *buffer, uint32_t size, uint32_t dr_address);
 int  dmqspi_stm32_dma_wait(uint32_t timeout_ms);
 void dmqspi_stm32_dma_release(void);
+void dmqspi_stm32_dma_cancel(void);
 #else
 #define dmqspi_stm32_dma_start(read, buffer, size, dr)  (1)
 #define dmqspi_stm32_dma_wait(timeout_ms)               (0)
 #define dmqspi_stm32_dma_release()                      ((void)0)
+#define dmqspi_stm32_dma_cancel()                       ((void)0)
 #endif
 
 #endif

@@ -130,6 +130,13 @@ void dmqspi_stm32_dma_release(void)
     g_dma.unavailable = false;
 }
 
+void dmqspi_stm32_dma_cancel(void)
+{
+    g_dma.active = false;
+    if (g_dma.lease != NULL)
+        dmdma_lease_abort(g_dma.lease);
+}
+
 int dmqspi_stm32_dma_start(bool read, void *buffer, uint32_t size, uint32_t dr_address)
 {
     if (size < DMA_MIN_BYTES || size > DMA_MAX_BYTES || !buffer_usable(buffer, size) || !dma_ensure())
@@ -178,11 +185,11 @@ int dmqspi_stm32_dma_wait(uint32_t timeout_ms)
         DMOD_LOG_WARN("dmqspi_port: DMA flagged an error on a completed transfer (event 0x%x) - accepted\n",
                       (unsigned)g_dma.last_event);
     }
-    g_dma.last_event = 0U;
     if (ret != 0)
         DMOD_LOG_ERROR("dmqspi_port: DMA transfer of %u bytes failed (%d): event 0x%x, remaining %u\n",
                        (unsigned)g_dma.size, ret, (unsigned)g_dma.last_event,
                        (unsigned)dmdma_lease_get_remaining(g_dma.lease));
+    g_dma.last_event = 0U;
     g_dma.active = false;
     dmdma_lease_abort(g_dma.lease);
     if (g_dma.read)
