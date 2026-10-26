@@ -48,7 +48,9 @@ is no byte stream, only commands. Everything goes through ioctl
 Concurrency: one command (including its data phase) is atomic - a dmosi mutex
 in the port. A multi-command sequence (WREN + program + poll) is the client's
 problem: the flash module serializes its own callers. While memory-mapped,
-indirect ioctls return `-EBUSY`.
+indirect ioctls return `-EBUSY`. A command that finds the controller busy although no
+command of the port is running aborts what was left behind (and resets the controller
+if that does not help) and goes on - see `docs/port-implementation.md`.
 
 ## What the flash module needs from this bus (for reference)
 

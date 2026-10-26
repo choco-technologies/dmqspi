@@ -19,7 +19,11 @@ F4 parts with QUADSPI: F412, F413, F423, F446, F469, F479 (the other F4s have no
    Create the mutex and the completion semaphore (dmosi), enable the NVIC IRQ (TCIE/TEIE/SMIE flags are set per transfer, not here).
 
 ## `_command` / `_read` / `_write` (indirect)
-1. Wait until `SR.BUSY == 0` (else `-EBUSY`); take the mutex.
+1. Take the mutex, then wait briefly (2 ms) for `SR.BUSY == 0`. With the mutex taken no transfer of ours is going on,
+   so a controller that stays busy was left with a transfer nobody finishes (seen on the STM32F746G-DISCO: an indirect
+   read stalled on a full FIFO, `DMAEN` off, every later command failing with `-EBUSY` for good). It is recovered:
+   stop the DMA stream, `CR.ABORT`; if it does not let go, empty the FIFO and abort again; as the last resort reset the
+   peripheral and program it again. `-EBUSY` only when even the reset did not help.
 2. `DLR = data_size - 1` (skip when no data phase); `CCR` = functional mode
    (`FMODE`: 00 indirect write, 01 indirect read), `IMODE/ADMODE/ABMODE/DMODE` from the
    `*_lines` fields (none=0, 1 line=1, 2=2, 4=3), `ADSIZE`, `ABSIZE`, `DCYC`, `INSTRUCTION`.
@@ -47,5 +51,7 @@ the window is normally cacheable - keep write-through/no-allocate attributes in 
 
 ## Errors / pitfalls
 * Never leave `CS` low after an error: `CR.ABORT` then `EN` off/on.
+* Waits for flags and for the FIFO are bounded by time (the RTOS tick, 200 ms), not by a count of polls - a count
+  says nothing about time when the thread is preempted; the count only ends a wait before the scheduler runs.
 * 24-bit addressing covers 16 MB; bigger chips need `ADSIZE=32 bit` and the chip's 4-byte mode.
 * Prescaler rounding must be *up* (never exceed `clock_hz`).
