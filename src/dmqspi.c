@@ -193,7 +193,7 @@ dmod_dmdrvi_dif_api_declaration(2.0, dmqspi, dmdrvi_ssize_t, _write, ( dmdrvi_co
 
 /* ---- The functions: what a driver configured before the file system of the devices calls ---- */
 
-dmod_dmqspi_api_declaration(1.0, int, _transfer, ( dmqspi_instance_t instance, const dmqspi_transfer_t *t ))
+dmod_dmqspi_api_declaration(1.0, int, _transfer, ( dmqspi_instance_t instance, const dmqspi_transfer2_t *t ))
 {
     if (t == NULL)
         return -EINVAL;
@@ -206,7 +206,7 @@ dmod_dmqspi_api_declaration(1.0, int, _transfer, ( dmqspi_instance_t instance, c
     }
 }
 
-dmod_dmqspi_api_declaration(1.0, int, _auto_poll, ( dmqspi_instance_t instance, const dmqspi_auto_poll_t *p ))
+dmod_dmqspi_api_declaration(1.0, int, _auto_poll, ( dmqspi_instance_t instance, const dmqspi_auto_poll2_t *p ))
 {
     return p != NULL ? dmqspi_port_auto_poll(instance, &p->cmd, &p->poll) : -EINVAL;
 }
@@ -238,6 +238,17 @@ dmod_dmqspi_api_declaration(1.0, void, _invalidate_mapped, ( dmqspi_instance_t i
 
 /* ---- The node ---- */
 
+/** A command of the released ABI (an 8-bit instruction) as the command the ports know. */
+static dmqspi_command2_t to_command2(const dmqspi_command_t *c)
+{
+    dmqspi_command2_t c2;
+    memset(&c2, 0, sizeof(c2));
+    c2.cmd = *c;
+    c2.instruction = c->instruction;
+    c2.instruction_size = dmqspi_instr_8bit;
+    return c2;
+}
+
 dmod_dmdrvi_dif_api_declaration(2.0, dmqspi, int, _ioctl, ( dmdrvi_context_t context, void* handle, int command, void* arg ))
 {
     (void)handle;
@@ -249,17 +260,29 @@ dmod_dmdrvi_dif_api_declaration(2.0, dmqspi, int, _ioctl, ( dmdrvi_context_t con
         return -EINVAL;
     switch (command)
     {
-        case DMQSPI_IOCTL_TRANSFER:
-            return dmqspi_transfer(inst, (const dmqspi_transfer_t *)arg);
+        case DMQSPI_IOCTL_TRANSFER:             /* the released commands: an 8-bit instruction */
+        {
+            const dmqspi_transfer_t *old = (const dmqspi_transfer_t *)arg;
+            dmqspi_transfer2_t t = { .cmd = to_command2(&old->cmd), .dir = old->dir, .data = old->data };
+            return dmqspi_transfer(inst, &t);
+        }
         case DMQSPI_IOCTL_AUTO_POLL:
-            return dmqspi_auto_poll(inst, (const dmqspi_auto_poll_t *)arg);
+        {
+            const dmqspi_auto_poll_t *old = (const dmqspi_auto_poll_t *)arg;
+            dmqspi_auto_poll2_t p = { .cmd = to_command2(&old->cmd), .poll = old->poll };
+            return dmqspi_auto_poll(inst, &p);
+        }
         case DMQSPI_IOCTL_ENTER_MAPPED:
         {
             dmqspi_map_request_t request;
             memset(&request, 0, sizeof(request));
-            request.read_cmd = *(const dmqspi_command_t *)arg;
+            request.read_cmd = to_command2((const dmqspi_command_t *)arg);
             return dmqspi_map(inst, &request, NULL);
         }
+        case DMQSPI_IOCTL_TRANSFER2:
+            return dmqspi_transfer(inst, (const dmqspi_transfer2_t *)arg);
+        case DMQSPI_IOCTL_AUTO_POLL2:
+            return dmqspi_auto_poll(inst, (const dmqspi_auto_poll2_t *)arg);
         case DMQSPI_IOCTL_MAP:
         {
             dmqspi_map_t *m = (dmqspi_map_t *)arg;

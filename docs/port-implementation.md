@@ -79,7 +79,7 @@ from the flash through the cache that is being changed.
 ## `_command` / `_read` / `_write`
 SPI1, the way ESP-IDF does it (the ROM `esp_rom_spi_cmd_config` / `esp_rom_spi_cmd_start`), the registers of the mode saved and restored.
 Lines of the phases: all 1 (SPI), instruction 1 with address and data 4 (QIO), or all 4 (a chip in the QPI mode: `FCMD_QUAD`), all with an
-8-bit instruction. 8 lines: `ddr`, a 16-bit instruction (the client gives both bytes), every phase on 8 lines and a 32-bit address, through the ROM
+8-bit instruction (`dmqspi_command2_t.cmd.instruction`). 8 lines: `ddr`, a 16-bit instruction (`dmqspi_command2_t.instruction`: the client gives both bytes), every phase on 8 lines and a 32-bit address, through the ROM
 `esp_rom_opiflash_exec_cmd` (OPI DTR). `dummy_cycles` are clock cycles; the ROM counts a DDR dummy phase as two bits for every cycle but the first,
 which the port converts. At most 64 bytes of data (the `W0..W15` registers). `_auto_poll` is `-ENOTSUP`.
 

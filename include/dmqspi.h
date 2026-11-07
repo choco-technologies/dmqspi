@@ -25,11 +25,11 @@
 /** Check a configuration without touching hardware. */
 dmod_dmqspi_api(1.0, bool, _validate_config, ( const dmqspi_config_t *config ));
 
-/** One command with its data phase (what DMQSPI_IOCTL_TRANSFER does). @return 0 or a negative errno (-EINVAL: no such controller) */
-dmod_dmqspi_api(1.0, int, _transfer, ( dmqspi_instance_t instance, const dmqspi_transfer_t *transfer ));
+/** One command with its data phase (what DMQSPI_IOCTL_TRANSFER2 does). @return 0 or a negative errno (-EINVAL: no such controller) */
+dmod_dmqspi_api(1.0, int, _transfer, ( dmqspi_instance_t instance, const dmqspi_transfer2_t *transfer ));
 
-/** Repeat a status read until (status & mask) == match or the time runs out (DMQSPI_IOCTL_AUTO_POLL). */
-dmod_dmqspi_api(1.0, int, _auto_poll, ( dmqspi_instance_t instance, const dmqspi_auto_poll_t *poll ));
+/** Repeat a status read until (status & mask) == match or the time runs out (DMQSPI_IOCTL_AUTO_POLL2). */
+dmod_dmqspi_api(1.0, int, _auto_poll, ( dmqspi_instance_t instance, const dmqspi_auto_poll2_t *poll ));
 
 /** Switch the memory-mapped window on: read only (flash) or read/write (RAM); `info` gets the window (DMQSPI_IOCTL_MAP). */
 dmod_dmqspi_api(1.0, int, _map, ( dmqspi_instance_t instance, const dmqspi_map_request_t *request, dmqspi_map_info_t *info ));

@@ -38,6 +38,12 @@ typedef struct
     uint32_t  dummy_bit_len;
 } rom_spi_cmd_t;
 
+/** The instruction of a command: 16 bits as the client gave them, or the byte of an 8-bit instruction phase. */
+static uint16_t instruction_of(const dmqspi_command2_t *c2)
+{
+    return c2->instruction_size == dmqspi_instr_16bit ? c2->instruction : (uint16_t)c2->cmd.instruction;
+}
+
 static struct
 {
     bool                ready;
@@ -109,8 +115,9 @@ static void set_clock(uint32_t div)
 /* ---- a command by SPI1 ---- */
 
 /** How the lines of the phases map onto the modes of the controller: -1 when it has none for them. */
-static int command_mode(const dmqspi_command_t *c, bool *fcmd_quad)
+static int command_mode(const dmqspi_command2_t *c2, bool *fcmd_quad)
 {
+    const dmqspi_command_t *c = &c2->cmd;
     *fcmd_quad = false;
     bool addr = c->address_lines != dmqspi_lines_none;
     bool data = c->data_lines != dmqspi_lines_none;
@@ -134,9 +141,10 @@ static int command_mode(const dmqspi_command_t *c, bool *fcmd_quad)
 }
 
 /** An octal command: DDR, a 16-bit instruction, every phase on eight lines, a 32-bit address (the OPI DTR mode of the octal chips). */
-static bool is_octal_command(const dmqspi_command_t *c)
+static bool is_octal_command(const dmqspi_command2_t *c2)
 {
-    return c->ddr && c->instruction_lines == dmqspi_lines_8 && c->instruction_size == dmqspi_instr_16bit &&
+    const dmqspi_command_t *c = &c2->cmd;
+    return c->ddr && c->instruction_lines == dmqspi_lines_8 && c2->instruction_size == dmqspi_instr_16bit &&
            (c->address_lines == dmqspi_lines_none || (c->address_lines == dmqspi_lines_8 && c->address_size == dmqspi_addr_32bit)) &&
            (c->data_lines == dmqspi_lines_none || c->data_lines == dmqspi_lines_8);
 }
@@ -147,19 +155,20 @@ static uint32_t octal_dummy_bits(uint8_t cycles)
     return cycles != 0U ? 2U * ((uint32_t)cycles - 1U) : 0U;
 }
 
-static int check_command(const dmqspi_command_t *c)
+static int check_command(const dmqspi_command2_t *c2)
 {
+    const dmqspi_command_t *c = &c2->cmd;
     bool quad;
     if (c->instruction_lines == dmqspi_lines_none || c->alternate_lines != dmqspi_lines_none)
         return -ENOTSUP;
     if (c->data_size > MAX_DATA_BYTES)
         return -EINVAL;
     if (s_q.lines == 8U)
-        return is_octal_command(c) ? 0 : -ENOTSUP;     /* an octal chip is in the OPI DTR mode: that is all it understands */
-    if (c->ddr || c->instruction_size != dmqspi_instr_8bit || c->instruction > 0xFFU || c->instruction_lines == dmqspi_lines_8 ||
+        return is_octal_command(c2) ? 0 : -ENOTSUP;     /* an octal chip is in the OPI DTR mode: that is all it understands */
+    if (c->ddr || c2->instruction_size != dmqspi_instr_8bit || c->instruction_lines == dmqspi_lines_8 ||
         c->address_lines == dmqspi_lines_8 || c->data_lines == dmqspi_lines_8)
         return -ENOTSUP;
-    if (command_mode(c, &quad) < 0)
+    if (command_mode(c2, &quad) < 0)
         return -ENOTSUP;
     return 0;
 }
@@ -168,20 +177,22 @@ typedef void (*opiflash_exec_cmd_t)(int spi_num, int mode, uint32_t cmd, int cmd
                                     int dummy_bits, uint8_t *mosi_data, int mosi_bit_len, uint8_t *miso_data,
                                     int miso_bit_len, uint32_t cs_mask, bool is_write_erase_operation);
 
-static void __attribute__((noinline)) execute_octal_critical(const dmqspi_command_t *c, uint8_t *tx, uint8_t *rx)
+static void __attribute__((noinline)) execute_octal_critical(const dmqspi_command2_t *c2, uint8_t *tx, uint8_t *rx)
 {
+    const dmqspi_command_t *c = &c2->cmd;
     uint32_t bits = c->data_size * 8U;
-    ((opiflash_exec_cmd_t)ROM_OPIFLASH_EXEC_CMD)(1, ROM_SPIFLASH_OPI_DTR_MODE, c->instruction, 16, c->address,
+    ((opiflash_exec_cmd_t)ROM_OPIFLASH_EXEC_CMD)(1, ROM_SPIFLASH_OPI_DTR_MODE, instruction_of(c2), 16, c->address,
         c->address_lines != dmqspi_lines_none ? 32 : 0, (int)octal_dummy_bits(c->dummy_cycles),
         tx, tx != NULL ? (int)bits : 0, rx, rx != NULL ? (int)bits : 0, CS1_MASK, false);
 }
 
-static void __attribute__((noinline)) execute_critical(const dmqspi_command_t *c, int mode, bool fcmd_quad, const void *tx, void *rx)
+static void __attribute__((noinline)) execute_critical(const dmqspi_command2_t *c2, int mode, bool fcmd_quad, const void *tx, void *rx)
 {
+    const dmqspi_command_t *c = &c2->cmd;
     uint32_t addr = c->address;
     rom_spi_cmd_t rc;
     memset(&rc, 0, sizeof(rc));
-    rc.cmd = c->instruction;
+    rc.cmd = instruction_of(c2);
     rc.cmd_bit_len = 8;
     rc.addr = &addr;
     rc.addr_bit_len = c->address_lines != dmqspi_lines_none ? address_bits(c->address_size) : 0U;
@@ -205,25 +216,26 @@ static void __attribute__((noinline)) execute_critical(const dmqspi_command_t *c
     *reg(MSPI_CTRL_REG(1)) = ctrl;
 }
 
-static int execute(const dmqspi_command_t *c, const void *tx, void *rx)
+static int execute(const dmqspi_command2_t *c2, const void *tx, void *rx)
 {
+    const dmqspi_command_t *c = &c2->cmd;
     if (!s_q.ready) return -EINVAL;
     if (c == NULL) return -EINVAL;
     if (s_q.mode != dmqspi_mode_indirect) return -EBUSY;
-    int ret = check_command(c);
+    int ret = check_command(c2);
     if (ret != 0) return ret;
 
     bool fcmd_quad = false;
-    int mode = s_q.lines == 8U ? 0 : command_mode(c, &fcmd_quad);
+    int mode = s_q.lines == 8U ? 0 : command_mode(c2, &fcmd_quad);
     /* the ROM routines move words: a buffer of its own, aligned */
     uint32_t tx_words[MAX_DATA_BYTES / 4U], rx_words[MAX_DATA_BYTES / 4U];
     if (tx != NULL) memcpy(tx_words, tx, c->data_size);
 
     Dmod_EnterCritical();
     if (s_q.lines == 8U)
-        execute_octal_critical(c, tx != NULL ? (uint8_t *)tx_words : NULL, rx != NULL ? (uint8_t *)rx_words : NULL);
+        execute_octal_critical(c2, tx != NULL ? (uint8_t *)tx_words : NULL, rx != NULL ? (uint8_t *)rx_words : NULL);
     else
-        execute_critical(c, mode, fcmd_quad, tx != NULL ? (const void *)tx_words : NULL, rx != NULL ? (void *)rx_words : NULL);
+        execute_critical(c2, mode, fcmd_quad, tx != NULL ? (const void *)tx_words : NULL, rx != NULL ? (void *)rx_words : NULL);
     Dmod_ExitCritical();
 
     if (rx != NULL) memcpy(rx, rx_words, c->data_size);
@@ -232,16 +244,17 @@ static int execute(const dmqspi_command_t *c, const void *tx, void *rx)
 
 /* ---- the memory-mapped window: SPI0 and the MMU ---- */
 
-static int check_mapped_command(const dmqspi_command_t *c)
+static int check_mapped_command(const dmqspi_command2_t *c2)
 {
+    const dmqspi_command_t *c = &c2->cmd;
     if (s_q.lines == 8U)
     {
-        if (!c->ddr || c->instruction_lines != dmqspi_lines_8 || c->instruction_size != dmqspi_instr_16bit || c->address_lines != dmqspi_lines_8 ||
+        if (!c->ddr || c->instruction_lines != dmqspi_lines_8 || c2->instruction_size != dmqspi_instr_16bit || c->address_lines != dmqspi_lines_8 ||
             c->data_lines != dmqspi_lines_8 || c->address_size != dmqspi_addr_32bit || c->alternate_lines != dmqspi_lines_none)
             return -ENOTSUP;
         return c->dummy_cycles == 0U || c->dummy_cycles > 32U ? -EINVAL : 0;     /* the dummy phase is always there on the octal bus */
     }
-    if (c->instruction_size != dmqspi_instr_8bit || c->instruction > 0xFFU) return -ENOTSUP;
+    if (c2->instruction_size != dmqspi_instr_8bit) return -ENOTSUP;
     if (c->instruction_lines != dmqspi_lines_1 && c->instruction_lines != dmqspi_lines_4) return -ENOTSUP;
     if (c->address_lines != dmqspi_lines_4 || c->data_lines != dmqspi_lines_4) return -ENOTSUP;
     if (c->alternate_lines != dmqspi_lines_none || c->ddr) return -ENOTSUP;
@@ -252,15 +265,15 @@ static int check_mapped_command(const dmqspi_command_t *c)
 /** The same for an octal chip: 16-bit commands, a 32-bit address, DDR, the dummy phases counted in bits. */
 static void config_cache_phases_octal(const dmqspi_map_request_t *r)
 {
-    uint32_t rd_dummy = octal_dummy_bits(r->read_cmd.dummy_cycles), wr_dummy = octal_dummy_bits(r->write_cmd.dummy_cycles);
+    uint32_t rd_dummy = octal_dummy_bits(r->read_cmd.cmd.dummy_cycles), wr_dummy = octal_dummy_bits(r->write_cmd.cmd.dummy_cycles);
 
     reg_set_bits(MSPI_CACHE_SCTRL_REG(0), SCTRL_SRAM_USR_WCMD);
     reg_set_field(MSPI_SRAM_DWR_CMD_REG(0), 0xFU, SRAM_CMD_BITLEN_S, 16U - 1U);
-    reg_set_field(MSPI_SRAM_DWR_CMD_REG(0), 0xFFFFU, 0U, r->write_cmd.instruction);
+    reg_set_field(MSPI_SRAM_DWR_CMD_REG(0), 0xFFFFU, 0U, instruction_of(&r->write_cmd));
 
     reg_set_bits(MSPI_CACHE_SCTRL_REG(0), SCTRL_SRAM_USR_RCMD);
     reg_set_field(MSPI_SRAM_DRD_CMD_REG(0), 0xFU, SRAM_CMD_BITLEN_S, 16U - 1U);
-    reg_set_field(MSPI_SRAM_DRD_CMD_REG(0), 0xFFFFU, 0U, r->read_cmd.instruction);
+    reg_set_field(MSPI_SRAM_DRD_CMD_REG(0), 0xFFFFU, 0U, instruction_of(&r->read_cmd));
 
     reg_set_field(MSPI_CACHE_SCTRL_REG(0), 0x3FU, SCTRL_SRAM_ADDR_BITLEN_S, 32U - 1U);
     reg_set_bits(MSPI_CACHE_SCTRL_REG(0), SCTRL_USR_SCMD_4BYTE);
@@ -293,29 +306,29 @@ static void config_cache_phases(const dmqspi_map_request_t *r)
 
     reg_set_bits(MSPI_CACHE_SCTRL_REG(0), SCTRL_SRAM_USR_RCMD);
     reg_set_field(MSPI_SRAM_DRD_CMD_REG(0), 0xFU, SRAM_CMD_BITLEN_S, 8U - 1U);
-    reg_set_field(MSPI_SRAM_DRD_CMD_REG(0), 0xFFFFU, 0U, r->read_cmd.instruction);
+    reg_set_field(MSPI_SRAM_DRD_CMD_REG(0), 0xFFFFU, 0U, instruction_of(&r->read_cmd));
 
     if (r->writable)
     {
         reg_set_bits(MSPI_CACHE_SCTRL_REG(0), SCTRL_SRAM_USR_WCMD);
         reg_set_field(MSPI_SRAM_DWR_CMD_REG(0), 0xFU, SRAM_CMD_BITLEN_S, 8U - 1U);
-        reg_set_field(MSPI_SRAM_DWR_CMD_REG(0), 0xFFFFU, 0U, r->write_cmd.instruction);
+        reg_set_field(MSPI_SRAM_DWR_CMD_REG(0), 0xFFFFU, 0U, instruction_of(&r->write_cmd));
     }
 
-    reg_set_field(MSPI_CACHE_SCTRL_REG(0), 0x3FU, SCTRL_SRAM_ADDR_BITLEN_S, address_bits(r->read_cmd.address_size) - 1U);
+    reg_set_field(MSPI_CACHE_SCTRL_REG(0), 0x3FU, SCTRL_SRAM_ADDR_BITLEN_S, address_bits(r->read_cmd.cmd.address_size) - 1U);
 
-    if (r->read_cmd.dummy_cycles != 0U)
+    if (r->read_cmd.cmd.dummy_cycles != 0U)
     {
         reg_set_bits(MSPI_CACHE_SCTRL_REG(0), SCTRL_USR_RD_SRAM_DUMMY);
-        reg_set_field(MSPI_CACHE_SCTRL_REG(0), 0x3FU, SCTRL_SRAM_RDUMMY_CYCLELEN_S, r->read_cmd.dummy_cycles - 1U);
+        reg_set_field(MSPI_CACHE_SCTRL_REG(0), 0x3FU, SCTRL_SRAM_RDUMMY_CYCLELEN_S, r->read_cmd.cmd.dummy_cycles - 1U);
     }
     else
         reg_clear_bits(MSPI_CACHE_SCTRL_REG(0), SCTRL_USR_RD_SRAM_DUMMY);
 
-    if (r->writable && r->write_cmd.dummy_cycles != 0U)
+    if (r->writable && r->write_cmd.cmd.dummy_cycles != 0U)
     {
         reg_set_bits(MSPI_CACHE_SCTRL_REG(0), SCTRL_USR_WR_SRAM_DUMMY);
-        reg_set_field(MSPI_CACHE_SCTRL_REG(0), 0x3FU, SCTRL_SRAM_WDUMMY_CYCLELEN_S, r->write_cmd.dummy_cycles - 1U);
+        reg_set_field(MSPI_CACHE_SCTRL_REG(0), 0x3FU, SCTRL_SRAM_WDUMMY_CYCLELEN_S, r->write_cmd.cmd.dummy_cycles - 1U);
     }
     else
         reg_clear_bits(MSPI_CACHE_SCTRL_REG(0), SCTRL_USR_WR_SRAM_DUMMY);
@@ -434,25 +447,25 @@ dmod_dmqspi_port_api_declaration(1.0, int, _deinit, ( dmqspi_instance_t instance
     return 0;
 }
 
-dmod_dmqspi_port_api_declaration(1.0, int, _command, ( dmqspi_instance_t instance, const dmqspi_command_t *cmd ))
+dmod_dmqspi_port_api_declaration(1.0, int, _command, ( dmqspi_instance_t instance, const dmqspi_command2_t *cmd ))
 {
-    if (instance != 1U || cmd == NULL || cmd->data_lines != dmqspi_lines_none) return -EINVAL;
+    if (instance != 1U || cmd == NULL || cmd->cmd.data_lines != dmqspi_lines_none) return -EINVAL;
     return execute(cmd, NULL, NULL);
 }
 
-dmod_dmqspi_port_api_declaration(1.0, int, _read, ( dmqspi_instance_t instance, const dmqspi_command_t *cmd, void *data ))
+dmod_dmqspi_port_api_declaration(1.0, int, _read, ( dmqspi_instance_t instance, const dmqspi_command2_t *cmd, void *data ))
 {
-    if (instance != 1U || cmd == NULL || data == NULL || cmd->data_lines == dmqspi_lines_none || cmd->data_size == 0U) return -EINVAL;
+    if (instance != 1U || cmd == NULL || data == NULL || cmd->cmd.data_lines == dmqspi_lines_none || cmd->cmd.data_size == 0U) return -EINVAL;
     return execute(cmd, NULL, data);
 }
 
-dmod_dmqspi_port_api_declaration(1.0, int, _write, ( dmqspi_instance_t instance, const dmqspi_command_t *cmd, const void *data ))
+dmod_dmqspi_port_api_declaration(1.0, int, _write, ( dmqspi_instance_t instance, const dmqspi_command2_t *cmd, const void *data ))
 {
-    if (instance != 1U || cmd == NULL || data == NULL || cmd->data_lines == dmqspi_lines_none || cmd->data_size == 0U) return -EINVAL;
+    if (instance != 1U || cmd == NULL || data == NULL || cmd->cmd.data_lines == dmqspi_lines_none || cmd->cmd.data_size == 0U) return -EINVAL;
     return execute(cmd, data, NULL);
 }
 
-dmod_dmqspi_port_api_declaration(1.0, int, _auto_poll, ( dmqspi_instance_t instance, const dmqspi_command_t *cmd, const dmqspi_poll_t *poll ))
+dmod_dmqspi_port_api_declaration(1.0, int, _auto_poll, ( dmqspi_instance_t instance, const dmqspi_command2_t *cmd, const dmqspi_poll_t *poll ))
 {
     (void)instance; (void)cmd; (void)poll;
     return -ENOTSUP;        /* the chips on this controller (RAM) have no busy status to wait for */
