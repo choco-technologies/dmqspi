@@ -51,9 +51,10 @@ dmod_dmqspi_port_api(1.0, int, _auto_poll, ( dmqspi_instance_t instance, const d
 
 /* --- Memory-mapped mode (XIP / read-only window) --- */
 
-/** Enter memory-mapped mode using `read_cmd` as the read command (data_size ignored).
+/** Enter memory-mapped mode: the controller sends `request->read_cmd` for the reads of the window and, when `request->writable`, `write_cmd`
+ *  for the writes. `info` (may be NULL) gets the window. A controller that maps the chip read only returns -ENOTSUP for a writable request.
  *  In this mode indirect calls return -EBUSY until _exit_memory_mapped(). */
-dmod_dmqspi_port_api(1.0, int, _enter_memory_mapped, ( dmqspi_instance_t instance, const dmqspi_command_t *read_cmd ) );
+dmod_dmqspi_port_api(1.0, int, _enter_memory_mapped, ( dmqspi_instance_t instance, const dmqspi_map_request_t *request, dmqspi_map_info_t *info ) );
 
 /** Abort memory-mapped mode (ABORT bit), back to indirect mode. */
 dmod_dmqspi_port_api(1.0, int, _exit_memory_mapped,  ( dmqspi_instance_t instance ) );
@@ -65,8 +66,12 @@ dmod_dmqspi_port_api(1.0, uintptr_t, _get_mapped_base, ( dmqspi_instance_t insta
 
 dmod_dmqspi_port_api(1.0, dmqspi_mode_t, _get_mode, ( dmqspi_instance_t instance ) );
 
-/** Cache coherency helper: invalidate the D-cache range of the mapped window
- *  (call after any write/erase when the mapped window was read before). */
+/** Cache coherency helper: drop the range of the mapped window from the data cache of the CPU, so the next read comes from the chip
+ *  (call after any write/erase of the chip when the window was read before). `offset` is in the window. */
 dmod_dmqspi_port_api(1.0, void, _invalidate_mapped, ( dmqspi_instance_t instance, uint32_t offset, uint32_t size ) );
+
+/** Cache coherency helper: write what the CPU changed in the range of a writable window back to the chip (the cache may hold it).
+ *  Nothing to do (and nothing to flush) for a read only window. */
+dmod_dmqspi_port_api(1.0, void, _flush_mapped, ( dmqspi_instance_t instance, uint32_t offset, uint32_t size ) );
 
 #endif // DMQSPI_PORT_H

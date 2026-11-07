@@ -42,7 +42,9 @@ is no byte stream, only commands. Everything goes through ioctl
 | --- | --- | --- |
 | `DMQSPI_IOCTL_TRANSFER` | `dmqspi_transfer_t*` | one command with optional read/write data phase (`dir`) |
 | `DMQSPI_IOCTL_AUTO_POLL` | `dmqspi_auto_poll_t*` | hardware status polling until `(status & mask) == match` or timeout |
-| `DMQSPI_IOCTL_ENTER_MAPPED` / `_EXIT_MAPPED` | read command / none | memory-mapped window on/off |
+| `DMQSPI_IOCTL_ENTER_MAPPED` / `_EXIT_MAPPED` | read command / none | read only memory-mapped window on/off |
+| `DMQSPI_IOCTL_MAP` | `dmqspi_map_t*` | the window with its write command too (a RAM chip), the answer is the window (base, size, clock) |
+| `DMQSPI_IOCTL_FLUSH_MAPPED`, `_INVALIDATE_MAPPED` | `uint32_t[2]` {offset, size} | cache coherency of the window: write back, drop |
 | `DMQSPI_IOCTL_GET_MAPPED_BASE`, `_GET_MODE`, `_INVALIDATE_MAPPED` | see header | helpers for the XIP window and D-cache |
 
 Concurrency: one command (including its data phase) is atomic - a dmosi mutex

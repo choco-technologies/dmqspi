@@ -63,10 +63,11 @@ dmod_dmqspi_port_api_declaration(1.0, int, _auto_poll, ( dmqspi_instance_t insta
     return -ENOTSUP;
 }
 
-dmod_dmqspi_port_api_declaration(1.0, int, _enter_memory_mapped, ( dmqspi_instance_t instance, const dmqspi_command_t *read_cmd ))
+dmod_dmqspi_port_api_declaration(1.0, int, _enter_memory_mapped, ( dmqspi_instance_t instance, const dmqspi_map_request_t *request, dmqspi_map_info_t *info ))
 {
     (void)instance;
-    (void)read_cmd;
+    (void)request;
+    (void)info;
     return -ENOTSUP;
 }
 
@@ -94,4 +95,11 @@ dmod_dmqspi_port_api_declaration(1.0, void, _invalidate_mapped, ( dmqspi_instanc
     (void)offset;
     (void)size;
 
+}
+
+dmod_dmqspi_port_api_declaration(1.0, void, _flush_mapped, ( dmqspi_instance_t instance, uint32_t offset, uint32_t size ))
+{
+    (void)instance;
+    (void)offset;
+    (void)size;
 }

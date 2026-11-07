@@ -79,6 +79,7 @@ static void read_config(dmqspi_config_t *c, dmini_context_t ini, const char *sec
     c->cs_high_cycles    = (uint8_t)dmini_get_int(ini, section, "cs_high_cycles", 2);
     c->clock_mode        = (uint8_t)dmini_get_int(ini, section, "clock_mode", 0);
     c->sample_shift_half = (uint8_t)dmini_get_int(ini, section, "sample_shift_half", 1);
+    c->data_lines        = (uint8_t)dmini_get_int(ini, section, "data_lines", 0);
 }
 
 dmod_dmqspi_api_declaration(1.0, bool, _validate_config, ( const dmqspi_config_t *config ))
@@ -92,6 +93,8 @@ dmod_dmqspi_api_declaration(1.0, bool, _validate_config, ( const dmqspi_config_t
     if (config->cs_high_cycles < 1 || config->cs_high_cycles > 8)
         return false;
     if (config->bank != dmqspi_bank_1 && config->bank != dmqspi_bank_2)
+        return false;
+    if (config->data_lines != 0 && config->data_lines != 1 && config->data_lines != 2 && config->data_lines != 4 && config->data_lines != 8)
         return false;
     return true;
 }
@@ -188,16 +191,52 @@ dmod_dmdrvi_dif_api_declaration(2.0, dmqspi, dmdrvi_ssize_t, _write, ( dmdrvi_co
     return -ENOTSUP;
 }
 
-static int ioctl_transfer(dmqspi_instance_t inst, const dmqspi_transfer_t *t)
+/* ---- The functions: what a driver configured before the file system of the devices calls ---- */
+
+dmod_dmqspi_api_declaration(1.0, int, _transfer, ( dmqspi_instance_t instance, const dmqspi_transfer_t *t ))
 {
+    if (t == NULL)
+        return -EINVAL;
     switch (t->dir)
     {
-        case dmqspi_dir_none:  return dmqspi_port_command(inst, &t->cmd);
-        case dmqspi_dir_read:  return t->data != NULL ? dmqspi_port_read(inst, &t->cmd, t->data) : -EINVAL;
-        case dmqspi_dir_write: return t->data != NULL ? dmqspi_port_write(inst, &t->cmd, t->data) : -EINVAL;
+        case dmqspi_dir_none:  return dmqspi_port_command(instance, &t->cmd);
+        case dmqspi_dir_read:  return t->data != NULL ? dmqspi_port_read(instance, &t->cmd, t->data) : -EINVAL;
+        case dmqspi_dir_write: return t->data != NULL ? dmqspi_port_write(instance, &t->cmd, t->data) : -EINVAL;
         default:               return -EINVAL;
     }
 }
+
+dmod_dmqspi_api_declaration(1.0, int, _auto_poll, ( dmqspi_instance_t instance, const dmqspi_auto_poll_t *p ))
+{
+    return p != NULL ? dmqspi_port_auto_poll(instance, &p->cmd, &p->poll) : -EINVAL;
+}
+
+dmod_dmqspi_api_declaration(1.0, int, _map, ( dmqspi_instance_t instance, const dmqspi_map_request_t *request, dmqspi_map_info_t *info ))
+{
+    return request != NULL ? dmqspi_port_enter_memory_mapped(instance, request, info) : -EINVAL;
+}
+
+dmod_dmqspi_api_declaration(1.0, int, _unmap, ( dmqspi_instance_t instance ))
+{
+    return dmqspi_port_exit_memory_mapped(instance);
+}
+
+dmod_dmqspi_api_declaration(1.0, dmqspi_mode_t, _get_mode, ( dmqspi_instance_t instance ))
+{
+    return dmqspi_port_get_mode(instance);
+}
+
+dmod_dmqspi_api_declaration(1.0, void, _flush_mapped, ( dmqspi_instance_t instance, uint32_t offset, uint32_t size ))
+{
+    dmqspi_port_flush_mapped(instance, offset, size);
+}
+
+dmod_dmqspi_api_declaration(1.0, void, _invalidate_mapped, ( dmqspi_instance_t instance, uint32_t offset, uint32_t size ))
+{
+    dmqspi_port_invalidate_mapped(instance, offset, size);
+}
+
+/* ---- The node ---- */
 
 dmod_dmdrvi_dif_api_declaration(2.0, dmqspi, int, _ioctl, ( dmdrvi_context_t context, void* handle, int command, void* arg ))
 {
@@ -206,29 +245,39 @@ dmod_dmdrvi_dif_api_declaration(2.0, dmqspi, int, _ioctl, ( dmdrvi_context_t con
         return -EINVAL;
     dmqspi_instance_t inst = context->config.instance;
     bool needs_arg = command != DMQSPI_IOCTL_EXIT_MAPPED;
-    if (needs_arg && arg == NULL && command >= DMQSPI_IOCTL_TRANSFER && command <= DMQSPI_IOCTL_INVALIDATE_MAPPED)
+    if (needs_arg && arg == NULL && command >= DMQSPI_IOCTL_TRANSFER && command <= DMQSPI_IOCTL_FLUSH_MAPPED)
         return -EINVAL;
     switch (command)
     {
         case DMQSPI_IOCTL_TRANSFER:
-            return ioctl_transfer(inst, (const dmqspi_transfer_t *)arg);
+            return dmqspi_transfer(inst, (const dmqspi_transfer_t *)arg);
         case DMQSPI_IOCTL_AUTO_POLL:
-        {
-            const dmqspi_auto_poll_t *p = (const dmqspi_auto_poll_t *)arg;
-            return dmqspi_port_auto_poll(inst, &p->cmd, &p->poll);
-        }
+            return dmqspi_auto_poll(inst, (const dmqspi_auto_poll_t *)arg);
         case DMQSPI_IOCTL_ENTER_MAPPED:
-            return dmqspi_port_enter_memory_mapped(inst, (const dmqspi_command_t *)arg);
+        {
+            dmqspi_map_request_t request;
+            memset(&request, 0, sizeof(request));
+            request.read_cmd = *(const dmqspi_command_t *)arg;
+            return dmqspi_map(inst, &request, NULL);
+        }
+        case DMQSPI_IOCTL_MAP:
+        {
+            dmqspi_map_t *m = (dmqspi_map_t *)arg;
+            return dmqspi_map(inst, &m->request, &m->info);
+        }
         case DMQSPI_IOCTL_EXIT_MAPPED:
-            return dmqspi_port_exit_memory_mapped(inst);
+            return dmqspi_unmap(inst);
         case DMQSPI_IOCTL_GET_MAPPED_BASE:
             *(uintptr_t *)arg = dmqspi_port_get_mapped_base(inst);
             return 0;
         case DMQSPI_IOCTL_GET_MODE:
-            *(dmqspi_mode_t *)arg = dmqspi_port_get_mode(inst);
+            *(dmqspi_mode_t *)arg = dmqspi_get_mode(inst);
             return 0;
         case DMQSPI_IOCTL_INVALIDATE_MAPPED:
-            dmqspi_port_invalidate_mapped(inst, ((const uint32_t *)arg)[0], ((const uint32_t *)arg)[1]);
+            dmqspi_invalidate_mapped(inst, ((const uint32_t *)arg)[0], ((const uint32_t *)arg)[1]);
+            return 0;
+        case DMQSPI_IOCTL_FLUSH_MAPPED:
+            dmqspi_flush_mapped(inst, ((const uint32_t *)arg)[0], ((const uint32_t *)arg)[1]);
             return 0;
         default:
             return -ENOTTY;     /* e.g. the class probes dmdevfs sends to every node */
