@@ -79,6 +79,7 @@ static void read_config(dmqspi_config_t *c, dmini_context_t ini, const char *sec
     c->cs_high_cycles    = (uint8_t)dmini_get_int(ini, section, "cs_high_cycles", 2);
     c->clock_mode        = (uint8_t)dmini_get_int(ini, section, "clock_mode", 0);
     c->sample_shift_half = (uint8_t)dmini_get_int(ini, section, "sample_shift_half", 1);
+    c->data_lines        = (uint8_t)dmini_get_int(ini, section, "data_lines", 0);
 }
 
 dmod_dmqspi_api_declaration(1.0, bool, _validate_config, ( const dmqspi_config_t *config ))
@@ -92,6 +93,8 @@ dmod_dmqspi_api_declaration(1.0, bool, _validate_config, ( const dmqspi_config_t
     if (config->cs_high_cycles < 1 || config->cs_high_cycles > 8)
         return false;
     if (config->bank != dmqspi_bank_1 && config->bank != dmqspi_bank_2)
+        return false;
+    if (config->data_lines != 0 && config->data_lines != 1 && config->data_lines != 2 && config->data_lines != 4 && config->data_lines != 8)
         return false;
     return true;
 }
@@ -199,14 +202,10 @@ static int ioctl_transfer(dmqspi_instance_t inst, const dmqspi_transfer_t *t)
     }
 }
 
-dmod_dmdrvi_dif_api_declaration(2.0, dmqspi, int, _ioctl, ( dmdrvi_context_t context, void* handle, int command, void* arg ))
+dmod_dmqspi_api_declaration(1.0, int, _ioctl, ( dmqspi_instance_t inst, int command, void *arg ))
 {
-    (void)handle;
-    if (!is_valid_context(context))
-        return -EINVAL;
-    dmqspi_instance_t inst = context->config.instance;
     bool needs_arg = command != DMQSPI_IOCTL_EXIT_MAPPED;
-    if (needs_arg && arg == NULL && command >= DMQSPI_IOCTL_TRANSFER && command <= DMQSPI_IOCTL_INVALIDATE_MAPPED)
+    if (needs_arg && arg == NULL && command >= DMQSPI_IOCTL_TRANSFER && command <= DMQSPI_IOCTL_ENTER_MAPPED_RW)
         return -EINVAL;
     switch (command)
     {
@@ -219,6 +218,11 @@ dmod_dmdrvi_dif_api_declaration(2.0, dmqspi, int, _ioctl, ( dmdrvi_context_t con
         }
         case DMQSPI_IOCTL_ENTER_MAPPED:
             return dmqspi_port_enter_memory_mapped(inst, (const dmqspi_command_t *)arg);
+        case DMQSPI_IOCTL_ENTER_MAPPED_RW:
+        {
+            dmqspi_mapped_rw_t *m = (dmqspi_mapped_rw_t *)arg;
+            return dmqspi_port_enter_memory_mapped_rw(inst, &m->request, &m->info);
+        }
         case DMQSPI_IOCTL_EXIT_MAPPED:
             return dmqspi_port_exit_memory_mapped(inst);
         case DMQSPI_IOCTL_GET_MAPPED_BASE:
@@ -233,6 +237,14 @@ dmod_dmdrvi_dif_api_declaration(2.0, dmqspi, int, _ioctl, ( dmdrvi_context_t con
         default:
             return -ENOTTY;     /* e.g. the class probes dmdevfs sends to every node */
     }
+}
+
+dmod_dmdrvi_dif_api_declaration(2.0, dmqspi, int, _ioctl, ( dmdrvi_context_t context, void* handle, int command, void* arg ))
+{
+    (void)handle;
+    if (!is_valid_context(context))
+        return -EINVAL;
+    return dmqspi_ioctl(context->config.instance, command, arg);
 }
 
 dmod_dmdrvi_dif_api_declaration(2.0, dmqspi, int, _flush, ( dmdrvi_context_t context, void* handle ))

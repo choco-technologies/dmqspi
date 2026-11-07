@@ -55,6 +55,11 @@ dmod_dmqspi_port_api(1.0, int, _auto_poll, ( dmqspi_instance_t instance, const d
  *  In this mode indirect calls return -EBUSY until _exit_memory_mapped(). */
 dmod_dmqspi_port_api(1.0, int, _enter_memory_mapped, ( dmqspi_instance_t instance, const dmqspi_command_t *read_cmd ) );
 
+/** Like _enter_memory_mapped, for a window that is also written by the CPU (a RAM chip behind the controller): `request->write_cmd`
+ *  is sent for the write accesses. `info` gets the window (data bus address, instruction bus alias, size). Controllers that
+ *  map the chip read-only (STM32 QUADSPI) return -ENOTSUP. */
+dmod_dmqspi_port_api(1.0, int, _enter_memory_mapped_rw, ( dmqspi_instance_t instance, const dmqspi_mapped_request_t *request, dmqspi_mapped_info_t *info ) );
+
 /** Abort memory-mapped mode (ABORT bit), back to indirect mode. */
 dmod_dmqspi_port_api(1.0, int, _exit_memory_mapped,  ( dmqspi_instance_t instance ) );
 

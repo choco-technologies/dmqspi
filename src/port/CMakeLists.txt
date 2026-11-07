@@ -47,6 +47,7 @@ dmod_add_library(${DMOD_MODULE_NAME} ${DMOD_MODULE_VERSION}
 # One dmod_link_modules() call (each call rewrites the requirements file).
 # (the x86_64 host stub needs only the dmdrvi headers; the others are published per stm32 family)
 set(DMQSPI_PORT_MODULES dmdrvi@>=2.0)
+# (the ESP32-S3 port needs nothing else: the registers, the MMU and the ROM routines of the chip)
 if(DMOD_CPU_FAMILY MATCHES "^stm32")
     list(APPEND DMQSPI_PORT_MODULES dmclk_port dmosi)
 endif()

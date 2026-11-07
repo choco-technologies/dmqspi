@@ -9,7 +9,7 @@ dmqspi - QUADSPI (external NOR flash) driver for DMOD. **Status: skeleton** - in
 
 dmqspi is the **QUADSPI bus** driver: it exposes the controller as a dmdrvi
 node `/dev/dmqspi<N>` on which a client sends commands (instruction / address /
-alternate / dummy / data phases on 1, 2 or 4 lines), auto-polls a status
+alternate / dummy / data phases on 1, 2, 4 or 8 lines), auto-polls a status
 register, and switches on a memory-mapped window (0x90000000 on STM32). It is
 chip-agnostic - like dmspi it knows nothing about what is attached. Flash
 chips (e.g. the N25Q128A on the STM32F746G-DISCO) are handled by a **separate
@@ -21,7 +21,7 @@ Two modules, same driver+port split as dmspi/dmsdio:
 | Module | Contains | Hardware knowledge |
 | --- | --- | --- |
 | `dmqspi` | dmdrvi bus driver, .ini parsing, ioctl dispatch | none - speaks only to `dmqspi_port` |
-| `dmqspi_port` | QUADSPI controller: send a command, move data, auto-poll, memory-mapped mode | `src/port/stm32_common` (shared), `stm32f4`, `stm32f7` |
+| `dmqspi_port` | QUADSPI controller: send a command, move data, auto-poll, memory-mapped mode | `src/port/stm32_common` (shared), `stm32f4`, `stm32f7`, `esp32s3` (the memory SPI: the external RAM) |
 
 Start with [docs/architecture.md](docs/architecture.md); the implementation
 plan, in the order it should be done, is [docs/tasks.md](docs/tasks.md).
@@ -79,9 +79,10 @@ This library module provides functions that can be used by other modules:
 
 | Function | Description |
 |----------|-------------|
-| `dmqspi_create()` | Create a new `dmqspi_t` instance. |
-| `dmqspi_destroy()` | Destroy an instance created by `_create()`. |
-| `dmqspi_is_valid()` | Check whether a handle is a valid instance. |
+| `dmqspi_validate_config()` | Check a configuration without touching hardware. |
+| `dmqspi_ioctl()` | The `DMQSPI_IOCTL_*` commands of the node as a function, for the clients that start before the file system of the devices is there (the external RAM). |
+
+The node `/dev/dmqspi<N>` takes the same commands through `ioctl`.
 
 See [include/dmqspi.h](include/dmqspi.h) for the full
 declarations and [docs/api-reference.md](docs/api-reference.md) for the
@@ -100,11 +101,16 @@ View documentation using `dmf-man dmqspi`.
 This module ships two DMOD modules: the architecture-independent
 `dmqspi` and `dmqspi_port`, which contains the
 architecture-specific implementation. The active architecture is selected via
-`DMOD_CPU_FAMILY` (default: `stm32f7`):
+`DMOD_CPU_FAMILY` (default: `stm32f7`; `stm32f4`, `esp32s3`, `x86_64` - a host stub):
 
 ```bash
 cmake .. -DDMOD_CPU_FAMILY=stm32f7
 ```
+
+On the **ESP32-S3** the port drives the memory SPI (MSPI) that the flash and the external RAM hang on - chip select 1, the RAM;
+chip select 0 is the flash the firmware runs from, and the port refuses it. Its pads are fixed, so there are no pin sections in the ini
+file. See [docs/port-implementation.md](docs/port-implementation.md) and `configs/board/` of [dmpsram](https://github.com/choco-technologies/dmpsram)
+for the ini files of boards.
 
 See [docs/port-implementation.md](docs/port-implementation.md) for how to add
 another architecture. Port-specific files:

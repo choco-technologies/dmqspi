@@ -70,6 +70,14 @@ dmod_dmqspi_port_api_declaration(1.0, int, _enter_memory_mapped, ( dmqspi_instan
     return -ENOTSUP;
 }
 
+dmod_dmqspi_port_api_declaration(1.0, int, _enter_memory_mapped_rw, ( dmqspi_instance_t instance, const dmqspi_mapped_request_t *request, dmqspi_mapped_info_t *info ))
+{
+    (void)instance;
+    (void)request;
+    (void)info;
+    return -ENOTSUP;
+}
+
 dmod_dmqspi_port_api_declaration(1.0, int, _exit_memory_mapped, ( dmqspi_instance_t instance ))
 {
     (void)instance;

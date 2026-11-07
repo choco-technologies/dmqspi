@@ -408,6 +408,7 @@ static int run_indirect(dmqspi_instance_t instance, const dmqspi_command_t *cmd,
 dmod_dmqspi_port_api_declaration(1.0, int, _init, ( const dmqspi_config_t *config ))
 {
     if (config == NULL || g_q.ready) return config == NULL ? -EINVAL : -EBUSY;
+    if (config->data_lines > 4) return -ENOTSUP;        /* no octal on the QUADSPI */
     if (config->instance != 1 || config->clock_hz == 0 ||
         config->flash_size_bytes < 2 || (config->flash_size_bytes & (config->flash_size_bytes - 1)))
         return -EINVAL;
@@ -483,6 +484,14 @@ dmod_dmqspi_port_api_declaration(1.0, int, _enter_memory_mapped, ( dmqspi_instan
     start_command(read_cmd, FMODE_MAPPED);
     g_q.mode = dmqspi_mode_memory_mapped;
     return finish(0);
+}
+
+dmod_dmqspi_port_api_declaration(1.0, int, _enter_memory_mapped_rw, ( dmqspi_instance_t instance, const dmqspi_mapped_request_t *request, dmqspi_mapped_info_t *info ))
+{
+    (void)instance;
+    (void)request;
+    (void)info;
+    return -ENOTSUP;
 }
 
 dmod_dmqspi_port_api_declaration(1.0, int, _exit_memory_mapped, ( dmqspi_instance_t instance ))
