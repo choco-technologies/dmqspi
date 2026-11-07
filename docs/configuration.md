@@ -6,7 +6,7 @@ same `friends_group`, see `configs/board/stm32f746g-disco/qspi.ini`).
 | Key | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `instance` | int | 1 | QUADSPI instance (node becomes `/dev/dmqspi<instance>`) |
-| `bank` | 1 \| 2 | 1 | Which bank's pins the chip is on |
+| `bank` | 1 \| 2 | 1 | The device slot of the controller the chip is on (STM32 QUADSPI: BK1/BK2 and their pins; ESP32-S3 memory SPI: chip select 0/1) |
 | `clock_hz` | int | 50000000 | Max CLK; the port picks the largest `f_kernel/(P+1)` not above it |
 | `flash_size` | int | required | Size of the address window of the attached device, power of two (-> FSIZE) |
 | `cs_high_cycles` | 1..8 | 2 | Min CS high time (N25Q needs >= 20 ns) |

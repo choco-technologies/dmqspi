@@ -80,9 +80,13 @@ This library module provides functions that can be used by other modules:
 | Function | Description |
 |----------|-------------|
 | `dmqspi_validate_config()` | Check a configuration without touching hardware. |
-| `dmqspi_ioctl()` | The `DMQSPI_IOCTL_*` commands of the node as a function, for the clients that start before the file system of the devices is there (the external RAM). |
+| `dmqspi_transfer()`, `dmqspi_auto_poll()` | One command with its data phase; a status read repeated until it matches. |
+| `dmqspi_map()`, `dmqspi_unmap()`, `dmqspi_get_mode()` | The memory-mapped window, read only (flash) or read/write (RAM). |
+| `dmqspi_flush_mapped()`, `dmqspi_invalidate_mapped()` | Cache coherency of the window: write back, drop. |
 
-The node `/dev/dmqspi<N>` takes the same commands through `ioctl`.
+The node `/dev/dmqspi<N>` takes the same operations as `DMQSPI_IOCTL_*` commands. The functions are for the drivers that use the controller while
+they are configured (an external RAM has to be a heap before the next driver is created): a driver that requires the `dmqspi` module is configured
+after the controller. The node is for what runs after the file system of the devices is there.
 
 See [include/dmqspi.h](include/dmqspi.h) for the full
 declarations and [docs/api-reference.md](docs/api-reference.md) for the

@@ -12,7 +12,7 @@
  *
  *  - Commands (_command/_read/_write) are sent by SPI1, the way ESP-IDF does it (the routines of the ROM program the
  *    registers; this port picks the mode of the lines and keeps the registers it does not own intact).
- *  - The memory-mapped window (_enter_memory_mapped_rw) is SPI0 + the MMU: the registers that tell the cache what to send for
+ *  - The memory-mapped window (_enter_memory_mapped) is SPI0 + the MMU: the registers that tell the cache what to send for
  *    a read and for a write access, then the entries of the MMU that point the window at the chip.
  *
  * Chip select 0 is the flash the firmware runs from: this port never touches it. Everything between the "critical" marks
@@ -133,10 +133,10 @@ static int command_mode(const dmqspi_command_t *c, bool *fcmd_quad)
     return -1;
 }
 
-/** An octal command: DDR, every phase on eight lines, a 32-bit address (what the octal chips take in the OPI DTR mode). */
+/** An octal command: DDR, a 16-bit instruction, every phase on eight lines, a 32-bit address (the OPI DTR mode of the octal chips). */
 static bool is_octal_command(const dmqspi_command_t *c)
 {
-    return c->ddr && c->instruction_lines == dmqspi_lines_8 &&
+    return c->ddr && c->instruction_lines == dmqspi_lines_8 && c->instruction_size == dmqspi_instr_16bit &&
            (c->address_lines == dmqspi_lines_none || (c->address_lines == dmqspi_lines_8 && c->address_size == dmqspi_addr_32bit)) &&
            (c->data_lines == dmqspi_lines_none || c->data_lines == dmqspi_lines_8);
 }
@@ -156,7 +156,8 @@ static int check_command(const dmqspi_command_t *c)
         return -EINVAL;
     if (s_q.lines == 8U)
         return is_octal_command(c) ? 0 : -ENOTSUP;     /* an octal chip is in the OPI DTR mode: that is all it understands */
-    if (c->ddr || c->instruction_lines == dmqspi_lines_8 || c->address_lines == dmqspi_lines_8 || c->data_lines == dmqspi_lines_8)
+    if (c->ddr || c->instruction_size != dmqspi_instr_8bit || c->instruction > 0xFFU || c->instruction_lines == dmqspi_lines_8 ||
+        c->address_lines == dmqspi_lines_8 || c->data_lines == dmqspi_lines_8)
         return -ENOTSUP;
     if (command_mode(c, &quad) < 0)
         return -ENOTSUP;
@@ -169,10 +170,8 @@ typedef void (*opiflash_exec_cmd_t)(int spi_num, int mode, uint32_t cmd, int cmd
 
 static void __attribute__((noinline)) execute_octal_critical(const dmqspi_command_t *c, uint8_t *tx, uint8_t *rx)
 {
-    /* the byte of the command goes out twice: in the DDR mode there are two bytes of it */
-    uint32_t cmd = ((uint32_t)c->instruction << 8) | c->instruction;
     uint32_t bits = c->data_size * 8U;
-    ((opiflash_exec_cmd_t)ROM_OPIFLASH_EXEC_CMD)(1, ROM_SPIFLASH_OPI_DTR_MODE, cmd, 16, c->address,
+    ((opiflash_exec_cmd_t)ROM_OPIFLASH_EXEC_CMD)(1, ROM_SPIFLASH_OPI_DTR_MODE, c->instruction, 16, c->address,
         c->address_lines != dmqspi_lines_none ? 32 : 0, (int)octal_dummy_bits(c->dummy_cycles),
         tx, tx != NULL ? (int)bits : 0, rx, rx != NULL ? (int)bits : 0, CS1_MASK, false);
 }
@@ -237,11 +236,12 @@ static int check_mapped_command(const dmqspi_command_t *c)
 {
     if (s_q.lines == 8U)
     {
-        if (!c->ddr || c->instruction_lines != dmqspi_lines_8 || c->address_lines != dmqspi_lines_8 || c->data_lines != dmqspi_lines_8 ||
-            c->address_size != dmqspi_addr_32bit || c->alternate_lines != dmqspi_lines_none)
+        if (!c->ddr || c->instruction_lines != dmqspi_lines_8 || c->instruction_size != dmqspi_instr_16bit || c->address_lines != dmqspi_lines_8 ||
+            c->data_lines != dmqspi_lines_8 || c->address_size != dmqspi_addr_32bit || c->alternate_lines != dmqspi_lines_none)
             return -ENOTSUP;
         return c->dummy_cycles == 0U || c->dummy_cycles > 32U ? -EINVAL : 0;     /* the dummy phase is always there on the octal bus */
     }
+    if (c->instruction_size != dmqspi_instr_8bit || c->instruction > 0xFFU) return -ENOTSUP;
     if (c->instruction_lines != dmqspi_lines_1 && c->instruction_lines != dmqspi_lines_4) return -ENOTSUP;
     if (c->address_lines != dmqspi_lines_4 || c->data_lines != dmqspi_lines_4) return -ENOTSUP;
     if (c->alternate_lines != dmqspi_lines_none || c->ddr) return -ENOTSUP;
@@ -249,18 +249,18 @@ static int check_mapped_command(const dmqspi_command_t *c)
     return 0;
 }
 
-/** The same for an octal chip: 16-bit commands (the byte twice), a 32-bit address, DDR, the dummy phases counted in bits. */
-static void config_cache_phases_octal(const dmqspi_mapped_request_t *r)
+/** The same for an octal chip: 16-bit commands, a 32-bit address, DDR, the dummy phases counted in bits. */
+static void config_cache_phases_octal(const dmqspi_map_request_t *r)
 {
     uint32_t rd_dummy = octal_dummy_bits(r->read_cmd.dummy_cycles), wr_dummy = octal_dummy_bits(r->write_cmd.dummy_cycles);
 
     reg_set_bits(MSPI_CACHE_SCTRL_REG(0), SCTRL_SRAM_USR_WCMD);
     reg_set_field(MSPI_SRAM_DWR_CMD_REG(0), 0xFU, SRAM_CMD_BITLEN_S, 16U - 1U);
-    reg_set_field(MSPI_SRAM_DWR_CMD_REG(0), 0xFFFFU, 0U, ((uint32_t)r->write_cmd.instruction << 8) | r->write_cmd.instruction);
+    reg_set_field(MSPI_SRAM_DWR_CMD_REG(0), 0xFFFFU, 0U, r->write_cmd.instruction);
 
     reg_set_bits(MSPI_CACHE_SCTRL_REG(0), SCTRL_SRAM_USR_RCMD);
     reg_set_field(MSPI_SRAM_DRD_CMD_REG(0), 0xFU, SRAM_CMD_BITLEN_S, 16U - 1U);
-    reg_set_field(MSPI_SRAM_DRD_CMD_REG(0), 0xFFFFU, 0U, ((uint32_t)r->read_cmd.instruction << 8) | r->read_cmd.instruction);
+    reg_set_field(MSPI_SRAM_DRD_CMD_REG(0), 0xFFFFU, 0U, r->read_cmd.instruction);
 
     reg_set_field(MSPI_CACHE_SCTRL_REG(0), 0x3FU, SCTRL_SRAM_ADDR_BITLEN_S, 32U - 1U);
     reg_set_bits(MSPI_CACHE_SCTRL_REG(0), SCTRL_USR_SCMD_4BYTE);
@@ -280,7 +280,7 @@ static void config_cache_phases_octal(const dmqspi_mapped_request_t *r)
 }
 
 /** What the cache needs to know to read and write the chip: the commands, the address, the dummy cycles, the lines. */
-static void config_cache_phases(const dmqspi_mapped_request_t *r)
+static void config_cache_phases(const dmqspi_map_request_t *r)
 {
     if (s_q.lines == 8U)
     {
@@ -323,7 +323,7 @@ static void config_cache_phases(const dmqspi_mapped_request_t *r)
     reg_clear_bits(MSPI_MISC_REG(0), MISC_CS1_DIS);     /* the cache uses the chip select 1: CS0 is the flash */
 }
 
-static void __attribute__((noinline)) map_critical(const dmqspi_mapped_request_t *r, uint32_t first_entry, uint32_t entries)
+static void __attribute__((noinline)) map_critical(const dmqspi_map_request_t *r, uint32_t first_entry, uint32_t entries)
 {
     uint32_t autoload = ((uint32_t (*)(void))ROM_CACHE_SUSPEND_DCACHE)();
 
@@ -458,17 +458,25 @@ dmod_dmqspi_port_api_declaration(1.0, int, _auto_poll, ( dmqspi_instance_t insta
     return -ENOTSUP;        /* the chips on this controller (RAM) have no busy status to wait for */
 }
 
-dmod_dmqspi_port_api_declaration(1.0, int, _enter_memory_mapped, ( dmqspi_instance_t instance, const dmqspi_command_t *read_cmd ))
+/** The first of `pages` entries of the MMU, taken from the end of the table, that nobody has mapped (the flash of the firmware has its own);
+ *  -1 when there is no such run. */
+static int find_free_entries(uint32_t pages)
 {
-    (void)instance; (void)read_cmd;
-    return -ENOTSUP;        /* the window of the external RAM is read and written: _enter_memory_mapped_rw */
+    uint32_t run = 0;
+    for (uint32_t i = MMU_ENTRIES; i-- > 0;)
+    {
+        run = (*reg(MMU_TABLE + 4U * i) & MMU_INVALID) != 0U ? run + 1U : 0U;
+        if (run == pages)
+            return (int)i;
+    }
+    return -1;
 }
 
-dmod_dmqspi_port_api_declaration(1.0, int, _enter_memory_mapped_rw, ( dmqspi_instance_t instance, const dmqspi_mapped_request_t *request, dmqspi_mapped_info_t *info ))
+dmod_dmqspi_port_api_declaration(1.0, int, _enter_memory_mapped, ( dmqspi_instance_t instance, const dmqspi_map_request_t *request, dmqspi_map_info_t *info ))
 {
-    if (instance != 1U || request == NULL || info == NULL || !s_q.ready) return -EINVAL;
+    if (instance != 1U || request == NULL || !s_q.ready) return -EINVAL;
     if (s_q.mode == dmqspi_mode_memory_mapped) return -EBUSY;
-    if (!request->writable) return -ENOTSUP;        /* the cache of the ESP32-S3 sends the write command for a write access */
+    if (!request->writable) return -ENOTSUP;        /* the cache of the ESP32-S3 sends the write command for a write access: a RAM window */
     int ret = check_mapped_command(&request->read_cmd);
     if (ret == 0) ret = check_mapped_command(&request->write_cmd);
     if (ret != 0) return ret;
@@ -476,17 +484,21 @@ dmod_dmqspi_port_api_declaration(1.0, int, _enter_memory_mapped_rw, ( dmqspi_ins
     uint32_t pages = s_q.config.flash_size_bytes / MMU_PAGE_SIZE;
     if (pages == 0U) return -EINVAL;
     if (pages > MAX_MAPPED_PAGES) pages = MAX_MAPPED_PAGES;
-    s_q.first_entry = MMU_ENTRIES - pages;        /* the end of the window */
+    int first = find_free_entries(pages);
+    if (first < 0) return -ENOMEM;
+    s_q.first_entry = (uint32_t)first;
     s_q.entries = pages;
 
     Dmod_EnterCritical();
     map_critical(request, s_q.first_entry, s_q.entries);
     Dmod_ExitCritical();
 
-    info->base = MMU_DBUS_BASE + s_q.first_entry * MMU_PAGE_SIZE;
-    info->code_base = MMU_IBUS_BASE + s_q.first_entry * MMU_PAGE_SIZE;
-    info->size = pages * MMU_PAGE_SIZE;
-    info->clock_hz = APB_FREQUENCY_HZ / clock_divider(s_q.config.clock_hz);
+    if (info != NULL)
+    {
+        info->base = MMU_DBUS_BASE + s_q.first_entry * MMU_PAGE_SIZE;
+        info->size = pages * MMU_PAGE_SIZE;
+        info->clock_hz = APB_FREQUENCY_HZ / clock_divider(s_q.config.clock_hz);
+    }
     s_q.mode = dmqspi_mode_memory_mapped;
     return 0;
 }
@@ -511,18 +523,31 @@ dmod_dmqspi_port_api_declaration(1.0, dmqspi_mode_t, _get_mode, ( dmqspi_instanc
     return s_q.mode;
 }
 
-/** Writes the lines of the range that the CPU changed out to the chip, then forgets them: the next read comes from the chip.
- *  The offset is in the window, as the CPU sees it. */
+/** The range of the window as addresses of the data bus, or false when it is not (all) in the window. The offset is in the window. */
+static bool window_range(uint32_t offset, uint32_t size, uint32_t *address, uint32_t *length)
+{
+    if (!s_q.ready || s_q.mode != dmqspi_mode_memory_mapped) return false;
+    uint32_t window = s_q.entries * (uint32_t)MMU_PAGE_SIZE;
+    if (offset >= window) return false;
+    *length = size > window - offset ? window - offset : size;
+    *address = (uint32_t)(MMU_DBUS_BASE + s_q.first_entry * MMU_PAGE_SIZE) + offset;
+    return true;
+}
+
+/** Writes the lines of the range that the CPU changed out to the chip (the data cache may hold them). */
+dmod_dmqspi_port_api_declaration(1.0, void, _flush_mapped, ( dmqspi_instance_t instance, uint32_t offset, uint32_t size ))
+{
+    uint32_t address, length;
+    if (instance != 1U || !window_range(offset, size, &address, &length)) return;
+    ((int (*)(uint32_t, uint32_t))ROM_CACHE_WRITEBACK_ADDR)(address, length);
+}
+
+/** Drops the lines of the range from the data cache: the next read comes from the chip. What the CPU changed and nobody flushed is lost. */
 dmod_dmqspi_port_api_declaration(1.0, void, _invalidate_mapped, ( dmqspi_instance_t instance, uint32_t offset, uint32_t size ))
 {
-    if (instance != 1U || !s_q.ready || s_q.mode != dmqspi_mode_memory_mapped) return;
-    uint32_t window = s_q.entries * (uint32_t)MMU_PAGE_SIZE;
-    if (offset >= window) return;
-    if (size > window - offset) size = window - offset;
-
-    uint32_t address = (uint32_t)(MMU_DBUS_BASE + s_q.first_entry * MMU_PAGE_SIZE) + offset;
-    ((int (*)(uint32_t, uint32_t))ROM_CACHE_WRITEBACK_ADDR)(address, size);
-    ((int (*)(uint32_t, uint32_t))ROM_CACHE_INVALIDATE_ADDR)(address, size);
+    uint32_t address, length;
+    if (instance != 1U || !window_range(offset, size, &address, &length)) return;
+    ((int (*)(uint32_t, uint32_t))ROM_CACHE_INVALIDATE_ADDR)(address, length);
 }
 
 int dmod_init(const Dmod_Config_t *Config)

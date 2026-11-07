@@ -63,7 +63,7 @@ the window is normally cacheable - keep write-through/no-allocate attributes in 
 `src/port/esp32s3/port.c`, registers and ROM addresses in `esp32s3_mspi.h`. The ESP32-S3 has no QUADSPI peripheral; the flash and the
 external RAM hang on the **memory SPI (MSPI)**: SPI1 (the CPU sends commands) and SPI0 (the cache: what it sends for an access to the
 window) share the pads and the clock. Chip select 0 is the flash (the firmware runs from it), chip select 1 the external RAM. This port
-serves chip select 1 only (`bank=2`; `bank=1` is refused with `-EACCES`).
+serves chip select 1 only (`bank=2`, the device slot 2; `bank=1` is the flash and is refused with `-EACCES`).
 
 ## `_init`
 1. The pads: the fixed pads of the bus (GPIO26 CS1, GPIO27/28 SPIHD/SPIWP, GPIO31/32 SPIQ/SPID: function 0; for 8 lines GPIO33-37
@@ -78,21 +78,24 @@ from the flash through the cache that is being changed.
 
 ## `_command` / `_read` / `_write`
 SPI1, the way ESP-IDF does it (the ROM `esp_rom_spi_cmd_config` / `esp_rom_spi_cmd_start`), the registers of the mode saved and restored.
-Lines of the phases: all 1 (SPI), instruction 1 with address and data 4 (QIO), or all 4 (a chip in the QPI mode: `FCMD_QUAD`). 8 lines:
-`ddr` with every phase on 8 lines and a 32-bit address, through the ROM `esp_rom_opiflash_exec_cmd` (OPI DTR; the byte of the instruction
-goes out twice; the dummy cycles are counted as the ROM does: two bits for every cycle but the first). At most 64 bytes of data (the
-`W0..W15` registers). `_auto_poll` and `_enter_memory_mapped` (read-only) are `-ENOTSUP`.
+Lines of the phases: all 1 (SPI), instruction 1 with address and data 4 (QIO), or all 4 (a chip in the QPI mode: `FCMD_QUAD`), all with an
+8-bit instruction. 8 lines: `ddr`, a 16-bit instruction (the client gives both bytes), every phase on 8 lines and a 32-bit address, through the ROM
+`esp_rom_opiflash_exec_cmd` (OPI DTR). `dummy_cycles` are clock cycles; the ROM counts a DDR dummy phase as two bits for every cycle but the first,
+which the port converts. At most 64 bytes of data (the `W0..W15` registers). `_auto_poll` is `-ENOTSUP`.
 
-## `_enter_memory_mapped_rw`
-The window of a RAM chip is read AND written by the CPU, so the request carries both commands (`write_cmd`). The port programs SPI0:
+## `_enter_memory_mapped`
+The window of a RAM chip is read AND written by the CPU, so the request is `writable` and carries both commands (`write_cmd`); a read only
+request is `-ENOTSUP` (the cache sends the write command for a write access). The port programs SPI0:
 the read and write commands (`SRAM_DRD_CMD`, `SRAM_DWR_CMD`), the address length, the dummy cycles, the lines (`USR_SRAM_QIO`; for 8
 lines `SRAM_OCT`, DDR and the 16-bit commands), the data cache mode (32 KB, 8 ways, 32-byte lines: as ESP-IDF sets it for the external
-RAM), then the MMU entries that point the window at the chip: 8 MB at the end of the 32 MB window of the cache (entries 384..511),
-`0x3D800000` for the data bus and `0x43800000` for the instruction bus (`info.code_base`). `_invalidate_mapped` writes the lines of
-a range back to the chip and drops them from the cache (ROM `Cache_WriteBack_Addr` + `Cache_Invalidate_Addr`).
+RAM), then the MMU entries that point the window at the chip: the highest run of entries nobody has mapped (the flash of the firmware has
+its own) in the 32 MB window of the cache - `0x3D800000` for 8 MB when the flash image is small enough - `-ENOMEM` when there is no such run. The
+same pages are seen by the instruction bus 0x6000000 higher; that alias is a matter of the loader of dmod (`DMOD_CODE_ALIAS`), not of the
+controller. `_flush_mapped` writes the lines of a range back to the chip (ROM `Cache_WriteBack_Addr`), `_invalidate_mapped` drops them from
+the cache (`Cache_Invalidate_Addr`): a client flushes first when it wants to keep what it wrote.
 
 ## Pitfalls
 * `s32c1i` (the atomic compare-and-set of the Xtensa) does not work on external RAM.
 * The window is behind the cache: DMA cannot use it, and it must not be touched with the cache disabled (the flash operations of the firmware).
-* A command executed between the start of the firmware and the first `_enter_memory_mapped_rw` of a chip that has not been woken up
+* A command executed between the start of the firmware and the first `_enter_memory_mapped` of a chip that has not been woken up
   (the chip is in the state it was left in) may be misunderstood: the driver of the chip (dmpsram) sends the reset first.

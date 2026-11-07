@@ -40,6 +40,13 @@ typedef enum
     dmqspi_addr_32bit,      /**< Bigger chips */
 } dmqspi_addr_size_t;
 
+/** Size of the instruction phase. */
+typedef enum
+{
+    dmqspi_instr_8bit = 0,  /**< One byte (the default; every controller) */
+    dmqspi_instr_16bit,     /**< Two bytes, `instruction` holds both (octal chips in the DDR mode) */
+} dmqspi_instr_size_t;
+
 /**
  * One QSPI transaction = instruction, address, alternate bytes, dummy
  * cycles, data - each phase with its own line count. This maps 1:1 onto the
@@ -47,7 +54,8 @@ typedef enum
  */
 typedef struct
 {
-    uint8_t             instruction;        /**< Opcode, e.g. 0x9F (READ ID) */
+    uint16_t            instruction;        /**< Opcode, e.g. 0x9F (READ ID); both bytes with instruction_size 16 bit */
+    dmqspi_instr_size_t instruction_size;   /**< 8 bit by default */
     dmqspi_lines_t      instruction_lines;  /**< none = no instruction phase */
     uint32_t            address;            /**< Valid when address_lines != none */
     dmqspi_lines_t      address_lines;
@@ -55,7 +63,7 @@ typedef struct
     uint32_t            alternate;          /**< Alternate bytes (mode bits), e.g. 0xA0 */
     dmqspi_lines_t      alternate_lines;
     uint8_t             alternate_size;     /**< In bytes 1..4 */
-    uint8_t             dummy_cycles;       /**< 0..31 */
+    uint8_t             dummy_cycles;       /**< Clock cycles of the bus between the address and the data (a DDR bus counts cycles, not edges) */
     dmqspi_lines_t      data_lines;         /**< none = no data phase */
     uint32_t            data_size;          /**< Bytes of the data phase */
     bool                ddr;                /**< Double data rate (unused by N25Q) */
@@ -86,31 +94,31 @@ typedef enum
 } dmqspi_mode_t;
 
 /**
- * Memory-mapped window that the CPU can also WRITE (RAM chips: PSRAM). `write_cmd` is what the controller sends for a write
- * access (same phases as a command: instruction, address, dummy cycles, data lines); it is used only when `writable` is set.
+ * What a memory-mapped window is made of. The controller sends `read_cmd` when the CPU reads the window and, when `writable`, `write_cmd`
+ * when it writes (a RAM chip). Flash windows are read only (`writable` false). The phases of both are those of a command
+ * (instruction, address, dummy cycles, data lines); `data_size` is ignored.
  */
 typedef struct
 {
-    dmqspi_command_t    read_cmd;           /**< As in _enter_memory_mapped (data_size ignored) */
-    dmqspi_command_t    write_cmd;          /**< Command of a write access (data_size ignored) */
-    bool                writable;           /**< false = read only window, write_cmd is not used */
-} dmqspi_mapped_request_t;
+    dmqspi_command_t    read_cmd;
+    dmqspi_command_t    write_cmd;          /**< Used only when writable */
+    bool                writable;           /**< false = read only window */
+} dmqspi_map_request_t;
 
-/** What a writable memory-mapped window looks like to the CPU. */
+/** Where the window is. */
 typedef struct
 {
-    uintptr_t           base;               /**< Window as the data bus sees it */
-    uintptr_t           code_base;          /**< The same memory as the instruction bus sees it (0 = no such alias) */
+    uintptr_t           base;               /**< Address of the window as the CPU sees it */
     uint32_t            size;               /**< Bytes of the window (flash_size of the configuration, or less when the controller cannot map that much) */
-    uint32_t            clock_hz;           /**< Clock the controller runs the chip at (not above the clock_hz of the configuration) */
-} dmqspi_mapped_info_t;
+    uint32_t            clock_hz;           /**< Clock the controller runs the chip at (not above the clock_hz of the configuration; 0 = the port does not report it) */
+} dmqspi_map_info_t;
 
-/** Argument of DMQSPI_IOCTL_ENTER_MAPPED_RW: the request goes in, the window comes out. */
+/** Argument of DMQSPI_IOCTL_MAP: the request goes in, the window comes out. */
 typedef struct
 {
-    dmqspi_mapped_request_t request;
-    dmqspi_mapped_info_t    info;
-} dmqspi_mapped_rw_t;
+    dmqspi_map_request_t request;
+    dmqspi_map_info_t    info;
+} dmqspi_map_t;
 
 /** What the status-poll (auto-polling) waits for: (status & mask) == match. */
 typedef struct
@@ -155,7 +163,8 @@ typedef struct
 #define DMQSPI_IOCTL_EXIT_MAPPED        (DMDRVI_IOCTL_CUSTOM_BASE + 3)  /**< arg: none */
 #define DMQSPI_IOCTL_GET_MAPPED_BASE    (DMDRVI_IOCTL_CUSTOM_BASE + 4)  /**< arg: uintptr_t* (0x90000000 on STM32) */
 #define DMQSPI_IOCTL_GET_MODE           (DMDRVI_IOCTL_CUSTOM_BASE + 5)  /**< arg: dmqspi_mode_t* */
-#define DMQSPI_IOCTL_INVALIDATE_MAPPED  (DMDRVI_IOCTL_CUSTOM_BASE + 6)  /**< arg: const uint32_t[2] {offset, size} */
-#define DMQSPI_IOCTL_ENTER_MAPPED_RW    (DMDRVI_IOCTL_CUSTOM_BASE + 7)  /**< arg: dmqspi_mapped_rw_t* (a window the CPU can write too: RAM chips) */
+#define DMQSPI_IOCTL_INVALIDATE_MAPPED  (DMDRVI_IOCTL_CUSTOM_BASE + 6)  /**< arg: const uint32_t[2] {offset, size}: drop the range from the cache of the CPU, the next read comes from the chip */
+#define DMQSPI_IOCTL_MAP                (DMDRVI_IOCTL_CUSTOM_BASE + 7)  /**< arg: dmqspi_map_t* (the window, read only or read/write: ENTER_MAPPED with the write command and the answer) */
+#define DMQSPI_IOCTL_FLUSH_MAPPED       (DMDRVI_IOCTL_CUSTOM_BASE + 8)  /**< arg: const uint32_t[2] {offset, size}: write what the CPU changed in the range back to the chip */
 
 #endif // DMQSPI_TYPES_H
