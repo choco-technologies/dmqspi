@@ -3,6 +3,7 @@
 #include "dmqspi.h"
 #include <errno.h>
 #include <string.h>
+#include <stddef.h>
 
 /* Host-side tests: only logic that needs no hardware (config validation,
  * and later the chip table / command building). Hardware is tested on the
@@ -68,7 +69,7 @@ DMOD_TEST_STEP(the_functions_check_their_arguments)
 
 DMOD_TEST_STEP(a_transfer_needs_a_buffer_for_its_data_phase)
 {
-    dmqspi_transfer_t t;
+    dmqspi_transfer2_t t;
     memset(&t, 0, sizeof(t));
     t.dir = dmqspi_dir_read;
     DMOD_TEST_EXPECT_EQ(dmqspi_transfer(1, &t), -EINVAL);
@@ -87,3 +88,25 @@ DMOD_TEST_STEP(a_controller_that_cannot_map_says_so)
     DMOD_TEST_EXPECT_EQ(dmqspi_map(1, &r, &info), -ENOTSUP);
     DMOD_TEST_EXPECT_EQ((int)dmqspi_get_mode(1), (int)dmqspi_mode_indirect);
 }
+
+#if defined(__x86_64__)
+/* The released command is part of the ABI of the node: dmspiflash and the tools are built against it. What was released (v0.2) had these
+ * offsets with 4-byte enums (the host); ARM has short enums and other offsets, which is why this runs on the host only. */
+DMOD_TEST_STEP(the_released_command_layout_is_unchanged)
+{
+    DMOD_TEST_EXPECT_EQ((int)sizeof(dmqspi_command_t), 44);
+    DMOD_TEST_EXPECT_EQ((int)offsetof(dmqspi_command_t, instruction), 0);
+    DMOD_TEST_EXPECT_EQ((int)offsetof(dmqspi_command_t, instruction_lines), 4);
+    DMOD_TEST_EXPECT_EQ((int)offsetof(dmqspi_command_t, address), 8);
+    DMOD_TEST_EXPECT_EQ((int)offsetof(dmqspi_command_t, address_lines), 12);
+    DMOD_TEST_EXPECT_EQ((int)offsetof(dmqspi_command_t, address_size), 16);
+    DMOD_TEST_EXPECT_EQ((int)offsetof(dmqspi_command_t, alternate), 20);
+    DMOD_TEST_EXPECT_EQ((int)offsetof(dmqspi_command_t, dummy_cycles), 29);
+    DMOD_TEST_EXPECT_EQ((int)offsetof(dmqspi_command_t, data_lines), 32);
+    DMOD_TEST_EXPECT_EQ((int)offsetof(dmqspi_command_t, data_size), 36);
+    DMOD_TEST_EXPECT_EQ((int)offsetof(dmqspi_command_t, ddr), 40);
+    DMOD_TEST_EXPECT_EQ((int)offsetof(dmqspi_transfer_t, dir), 44);
+    DMOD_TEST_EXPECT_EQ((int)sizeof(dmqspi_transfer_t), 56);
+    DMOD_TEST_EXPECT_EQ((int)sizeof(dmqspi_auto_poll_t), 56);
+}
+#endif

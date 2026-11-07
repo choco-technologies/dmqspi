@@ -33,13 +33,13 @@ dmod_dmqspi_port_api(1.0, int, _deinit, ( dmqspi_instance_t instance ) );
 /* --- Indirect mode: one transaction per call --- */
 
 /** Command without data phase (WREN, erase, write status). Waits for completion (TCF). */
-dmod_dmqspi_port_api(1.0, int, _command, ( dmqspi_instance_t instance, const dmqspi_command_t *cmd ) );
+dmod_dmqspi_port_api(1.0, int, _command, ( dmqspi_instance_t instance, const dmqspi_command2_t *cmd ) );
 
 /** Command with an indirect read data phase; reads cmd->data_size bytes. */
-dmod_dmqspi_port_api(1.0, int, _read,    ( dmqspi_instance_t instance, const dmqspi_command_t *cmd, void *data ) );
+dmod_dmqspi_port_api(1.0, int, _read,    ( dmqspi_instance_t instance, const dmqspi_command2_t *cmd, void *data ) );
 
 /** Command with an indirect write data phase; writes cmd->data_size bytes. */
-dmod_dmqspi_port_api(1.0, int, _write,   ( dmqspi_instance_t instance, const dmqspi_command_t *cmd, const void *data ) );
+dmod_dmqspi_port_api(1.0, int, _write,   ( dmqspi_instance_t instance, const dmqspi_command2_t *cmd, const void *data ) );
 
 /**
  * Hardware auto-polling: repeat `cmd` (a status-register read, data_size 1..4)
@@ -47,7 +47,7 @@ dmod_dmqspi_port_api(1.0, int, _write,   ( dmqspi_instance_t instance, const dmq
  * (-ETIMEDOUT). Used for "write in progress" after program/erase. The
  * calling thread should sleep (IRQ + semaphore), not spin, for long erases.
  */
-dmod_dmqspi_port_api(1.0, int, _auto_poll, ( dmqspi_instance_t instance, const dmqspi_command_t *cmd, const dmqspi_poll_t *poll ) );
+dmod_dmqspi_port_api(1.0, int, _auto_poll, ( dmqspi_instance_t instance, const dmqspi_command2_t *cmd, const dmqspi_poll_t *poll ) );
 
 /* --- Memory-mapped mode (XIP / read-only window) --- */
 

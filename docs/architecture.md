@@ -42,6 +42,7 @@ is no byte stream, only commands. Everything goes through ioctl
 | --- | --- | --- |
 | `DMQSPI_IOCTL_TRANSFER` | `dmqspi_transfer_t*` | one command with optional read/write data phase (`dir`) |
 | `DMQSPI_IOCTL_AUTO_POLL` | `dmqspi_auto_poll_t*` | hardware status polling until `(status & mask) == match` or timeout |
+| `DMQSPI_IOCTL_TRANSFER2`, `_AUTO_POLL2` | `dmqspi_transfer2_t*`, `dmqspi_auto_poll2_t*` | the same with a `dmqspi_command2_t`: an instruction of 8 or 16 bits (octal chips) |
 | `DMQSPI_IOCTL_ENTER_MAPPED` / `_EXIT_MAPPED` | read command / none | read only memory-mapped window on/off |
 | `DMQSPI_IOCTL_MAP` | `dmqspi_map_t*` | the window with its write command too (a RAM chip), the answer is the window (base, size, clock) |
 | `DMQSPI_IOCTL_FLUSH_MAPPED`, `_INVALIDATE_MAPPED` | `uint32_t[2]` {offset, size} | cache coherency of the window: write back, drop |
@@ -61,3 +62,11 @@ WREN 0x06, quad enable, page program, sector erase, quad fast read 0xEB),
 `AUTO_POLL` (status WIP=0 after program/erase) and `ENTER_MAPPED` (XIP). It
 exports `DMDRVI_IOCTL_BLOCK_*` (dmdrvi already has GET_INFO/ERASE) so that
 automount, blkid and a file system with wear levelling (littlefs, later) work on top.
+
+## The ABI of the node
+
+`dmqspi_command_t`, `dmqspi_transfer_t`, `dmqspi_auto_poll_t` and the ioctls that take them (`TRANSFER`, `AUTO_POLL`, `ENTER_MAPPED`) are what
+the clients that are released (dmspiflash, the tools) are built against; their layout depends on the compiler (ARM uses short enums) and
+**does not change**. What a newer controller needs - a 16-bit instruction (octal DDR chips) - is in `dmqspi_command2_t` (the old command and the
+wider instruction) with its own ioctls (`TRANSFER2`, `AUTO_POLL2`, `MAP`) and the functions of `dmqspi.h`. The driver converts the old structures
+to the new ones, so the ports know only the new ones.

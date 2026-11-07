@@ -113,11 +113,15 @@ static uint32_t lines_to_mode(dmqspi_lines_t lines)
     }
 }
 
-/** What the QUADSPI can send: an 8-bit instruction on 1, 2 or 4 lines (no 16-bit instructions, no 8 lines). */
-static bool command_supported(const dmqspi_command_t *c)
+/** The QUADSPI sends an 8-bit instruction on 1, 2 or 4 lines (no 16-bit instruction, no eight lines, no DDR on this controller): the commands
+ *  of the ports are the "2" commands, and only the phases of the released command reach the code below. */
+static const dmqspi_command_t *plain(const dmqspi_command2_t *c2)
 {
-    return c->instruction_size == dmqspi_instr_8bit && c->instruction <= 0xFFu && c->instruction_lines <= dmqspi_lines_4 &&
-           c->address_lines <= dmqspi_lines_4 && c->alternate_lines <= dmqspi_lines_4 && c->data_lines <= dmqspi_lines_4 && !c->ddr;
+    const dmqspi_command_t *c = &c2->cmd;
+    if (c2->instruction_size != dmqspi_instr_8bit || c->instruction_lines > dmqspi_lines_4 || c->address_lines > dmqspi_lines_4 ||
+        c->alternate_lines > dmqspi_lines_4 || c->data_lines > dmqspi_lines_4 || c->ddr)
+        return NULL;
+    return c;
 }
 
 static uint32_t build_ccr(const dmqspi_command_t *c, uint32_t fmode)
@@ -415,7 +419,6 @@ static int run_indirect(dmqspi_instance_t instance, const dmqspi_command_t *cmd,
 dmod_dmqspi_port_api_declaration(1.0, int, _init, ( const dmqspi_config_t *config ))
 {
     if (config == NULL || g_q.ready) return config == NULL ? -EINVAL : -EBUSY;
-    if (config->data_lines > 4) return -ENOTSUP;        /* no octal on the QUADSPI */
     if (config->instance != 1 || config->clock_hz == 0 ||
         config->flash_size_bytes < 2 || (config->flash_size_bytes & (config->flash_size_bytes - 1)))
         return -EINVAL;
@@ -445,31 +448,35 @@ dmod_dmqspi_port_api_declaration(1.0, int, _deinit, ( dmqspi_instance_t instance
     return 0;
 }
 
-dmod_dmqspi_port_api_declaration(1.0, int, _command, ( dmqspi_instance_t instance, const dmqspi_command_t *cmd ))
+dmod_dmqspi_port_api_declaration(1.0, int, _command, ( dmqspi_instance_t instance, const dmqspi_command2_t *cmd2 ))
 {
-    if (cmd == NULL || cmd->data_lines != dmqspi_lines_none) return -EINVAL;
-    if (!command_supported(cmd)) return -ENOTSUP;
+    if (cmd2 == NULL || cmd2->cmd.data_lines != dmqspi_lines_none) return -EINVAL;
+    const dmqspi_command_t *cmd = plain(cmd2);
+    if (cmd == NULL) return -ENOTSUP;
     return run_indirect(instance, cmd, FMODE_WRITE, NULL, NULL);
 }
 
-dmod_dmqspi_port_api_declaration(1.0, int, _read, ( dmqspi_instance_t instance, const dmqspi_command_t *cmd, void *data ))
+dmod_dmqspi_port_api_declaration(1.0, int, _read, ( dmqspi_instance_t instance, const dmqspi_command2_t *cmd2, void *data ))
 {
-    if (cmd == NULL || data == NULL || cmd->data_size == 0) return -EINVAL;
-    if (!command_supported(cmd)) return -ENOTSUP;
+    if (cmd2 == NULL || data == NULL || cmd2->cmd.data_size == 0) return -EINVAL;
+    const dmqspi_command_t *cmd = plain(cmd2);
+    if (cmd == NULL) return -ENOTSUP;
     return run_indirect(instance, cmd, FMODE_READ, data, NULL);
 }
 
-dmod_dmqspi_port_api_declaration(1.0, int, _write, ( dmqspi_instance_t instance, const dmqspi_command_t *cmd, const void *data ))
+dmod_dmqspi_port_api_declaration(1.0, int, _write, ( dmqspi_instance_t instance, const dmqspi_command2_t *cmd2, const void *data ))
 {
-    if (cmd == NULL || data == NULL || cmd->data_size == 0) return -EINVAL;
-    if (!command_supported(cmd)) return -ENOTSUP;
+    if (cmd2 == NULL || data == NULL || cmd2->cmd.data_size == 0) return -EINVAL;
+    const dmqspi_command_t *cmd = plain(cmd2);
+    if (cmd == NULL) return -ENOTSUP;
     return run_indirect(instance, cmd, FMODE_WRITE, NULL, data);
 }
 
-dmod_dmqspi_port_api_declaration(1.0, int, _auto_poll, ( dmqspi_instance_t instance, const dmqspi_command_t *cmd, const dmqspi_poll_t *poll ))
+dmod_dmqspi_port_api_declaration(1.0, int, _auto_poll, ( dmqspi_instance_t instance, const dmqspi_command2_t *cmd2, const dmqspi_poll_t *poll ))
 {
-    if (cmd == NULL || poll == NULL || cmd->data_size < 1 || cmd->data_size > 4) return -EINVAL;
-    if (!command_supported(cmd)) return -ENOTSUP;
+    if (cmd2 == NULL || poll == NULL || cmd2->cmd.data_size < 1 || cmd2->cmd.data_size > 4) return -EINVAL;
+    const dmqspi_command_t *cmd = plain(cmd2);
+    if (cmd == NULL) return -ENOTSUP;
     int ret = begin(instance);
     if (ret != 0) return ret;
     qspi_regs_t *q = regs();
@@ -491,10 +498,11 @@ dmod_dmqspi_port_api_declaration(1.0, int, _enter_memory_mapped, ( dmqspi_instan
 {
     if (request == NULL) return -EINVAL;
     if (request->writable) return -ENOTSUP;         /* the window of the QUADSPI is read only */
-    if (!command_supported(&request->read_cmd)) return -ENOTSUP;
+    const dmqspi_command_t *read_cmd = plain(&request->read_cmd);
+    if (read_cmd == NULL) return -ENOTSUP;
     int ret = begin(instance);
     if (ret != 0) return ret == -EBUSY && g_q.mode == dmqspi_mode_memory_mapped ? 0 : ret;
-    start_command(&request->read_cmd, FMODE_MAPPED);
+    start_command(read_cmd, FMODE_MAPPED);
     g_q.mode = dmqspi_mode_memory_mapped;
     if (info != NULL)
     {
@@ -541,14 +549,6 @@ dmod_dmqspi_port_api_declaration(1.0, void, _invalidate_mapped, ( dmqspi_instanc
     __asm volatile ("dsb 0xF\n isb 0xF" ::: "memory");
 }
 
-dmod_dmqspi_port_api_declaration(1.0, void, _flush_mapped, ( dmqspi_instance_t instance, uint32_t offset, uint32_t size ))
-{
-    /* the window is read only: the CPU changes nothing in it that would have to be written back */
-    (void)instance;
-    (void)offset;
-    (void)size;
-}
-
 /* --- ISR: wake the thread waiting in _auto_poll --- */
 
 void dmqspi_stm32_irq_handler(void)
@@ -560,4 +560,12 @@ void dmqspi_stm32_irq_handler(void)
         q->CR &= ~(CR_SMIE | CR_TEIE);      /* the thread clears the flags */
         dmosi_semaphore_post(g_q.irq_sem, 1);
     }
+}
+
+dmod_dmqspi_port_api_declaration(1.0, void, _flush_mapped, ( dmqspi_instance_t instance, uint32_t offset, uint32_t size ))
+{
+    /* the window is read only: the CPU changes nothing in it that would have to be written back */
+    (void)instance;
+    (void)offset;
+    (void)size;
 }

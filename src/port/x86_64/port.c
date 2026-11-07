@@ -32,22 +32,14 @@ dmod_dmqspi_port_api_declaration(1.0, int, _deinit, ( dmqspi_instance_t instance
     return -ENOTSUP;
 }
 
-dmod_dmqspi_port_api_declaration(1.0, int, _command, ( dmqspi_instance_t instance, const dmqspi_command_t *cmd ))
+dmod_dmqspi_port_api_declaration(1.0, int, _command, ( dmqspi_instance_t instance, const dmqspi_command2_t *cmd ))
 {
     (void)instance;
     (void)cmd;
     return -ENOTSUP;
 }
 
-dmod_dmqspi_port_api_declaration(1.0, int, _read, ( dmqspi_instance_t instance, const dmqspi_command_t *cmd, void *data ))
-{
-    (void)instance;
-    (void)cmd;
-    (void)data;
-    return -ENOTSUP;
-}
-
-dmod_dmqspi_port_api_declaration(1.0, int, _write, ( dmqspi_instance_t instance, const dmqspi_command_t *cmd, const void *data ))
+dmod_dmqspi_port_api_declaration(1.0, int, _read, ( dmqspi_instance_t instance, const dmqspi_command2_t *cmd, void *data ))
 {
     (void)instance;
     (void)cmd;
@@ -55,7 +47,15 @@ dmod_dmqspi_port_api_declaration(1.0, int, _write, ( dmqspi_instance_t instance,
     return -ENOTSUP;
 }
 
-dmod_dmqspi_port_api_declaration(1.0, int, _auto_poll, ( dmqspi_instance_t instance, const dmqspi_command_t *cmd, const dmqspi_poll_t *poll ))
+dmod_dmqspi_port_api_declaration(1.0, int, _write, ( dmqspi_instance_t instance, const dmqspi_command2_t *cmd, const void *data ))
+{
+    (void)instance;
+    (void)cmd;
+    (void)data;
+    return -ENOTSUP;
+}
+
+dmod_dmqspi_port_api_declaration(1.0, int, _auto_poll, ( dmqspi_instance_t instance, const dmqspi_command2_t *cmd, const dmqspi_poll_t *poll ))
 {
     (void)instance;
     (void)cmd;
