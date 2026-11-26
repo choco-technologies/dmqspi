@@ -70,7 +70,7 @@ serves chip select 1 only (`bank=2`, the device slot 2; `bank=1` is the flash an
    SPIIO4-7 and DQS: function 4), all with the strongest drive, and the drive of the clock pads (the DATE register). Eight lines are refused
    (`-ENODEV`) on a package whose eFuses say it has no PSRAM inside: GPIO33-37 are free pins there.
 2. The timing of the chip select (shared by SPI0 and SPI1) and the clock of the chip (`SRAM_CLK`: APB 80 MHz / divider, rounded up; up to
-   40 MHz for 4 lines, 20 MHz for 8: no timing tuning of the MSPI here).
+   40 MHz for 4 and for 8 lines: no timing tuning of the MSPI here; an octal chip at 40 MHz DDR gives about 80 MB/s, enough for an 800x480 RGB565 display scanned out of it).
 3. 8 lines: no ECC (`SYSCON_SRAM_ACE0_ATTR` bit 8), SPI1 in the DTR mode (`DDR_FMEM_VAR_DUMMY`, `esp_rom_spi_set_dtr_swap_mode`).
 
 Everything that reconfigures the cache runs in a critical section and calls nothing but the ROM and this file: the firmware is executed

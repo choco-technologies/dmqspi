@@ -23,7 +23,7 @@
 #define MAX_DATA_BYTES      64U         /* the W0..W15 registers of the controller */
 #define CS1_MASK            BIT(1)
 #define MAX_CLOCK_HZ        40000000U   /* no timing tuning of the MSPI here: what ESP-IDF runs without it */
-#define MAX_OCTAL_CLOCK_HZ  20000000U   /* the DDR bus needs the tuning from 40 MHz up */
+#define MAX_OCTAL_CLOCK_HZ  40000000U   /* the octal DDR bus: 40 MHz runs without tuning (80 MHz would need it); checked on an ESP32-S3-WROOM-1-N4R8 */
 
 typedef struct
 {
