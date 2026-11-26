@@ -13,10 +13,15 @@ same `friends_group`, see `configs/board/stm32f746g-disco/qspi.ini`).
 | `clock_mode` | 0 \| 3 | 0 | CLK level when idle |
 | `sample_shift_half` | 0 \| 1 | 1 | Sample half a cycle later (needed above ~40 MHz) |
 | `data_lines` | 1 \| 2 \| 4 \| 8 | 0 | Data lines the chip is wired with (0: what the controller has). The ESP32-S3 port sets up the pads of 4 (quad) or 8 (octal) lines; STM32 refuses 8 |
+| `boot_flash_clock_hz` | int | 0 | ESP32-S3: the clock of the flash the firmware runs from (chip select 0) when the port changes the clock of the controller (80 MHz octal: see below); 0 = it keeps its clock. Other ports ignore it |
+| `boot_flash_lines` | 0 \| 4 | 0 | ESP32-S3: 4 = that flash is read with four lines (QIO) from then on - only for a chip whose QE bit is set (e.g. GD25Q32 as shipped); 0 = as it is |
 
-ESP32-S3: `bank=2` (the chip select 1 - the chip select 0 is the flash of the chip, the port refuses it), `clock_hz` up to 40 MHz for 4 lines and 40 MHz for 8
-(no timing tuning of the memory SPI; 40 MHz DDR for 8 lines was run on an ESP32-S3-WROOM-1-N4R8), `flash_size` is the size of the RAM window (up to 8 MB map), `data_lines=8` only on the packages that have the octal
-PSRAM inside (the eFuses say so: otherwise `-ENODEV` and the pads GPIO33-37 are left alone).
+ESP32-S3: `bank=2` (the chip select 1 - the chip select 0 is the flash of the chip, the port refuses it), `clock_hz` up to 40 MHz for 4 lines and 80 MHz for 8
+(above 40 MHz the core clock of the memory SPI goes to 160 MHz and the sampling of the data is tuned when the window is mapped - see
+port-implementation.md; nothing that reads back: 40 MHz; run on an ESP32-S3-WROOM-1-N4R8), `flash_size` is the size of the RAM window (up to 8 MB map), `data_lines=8` only on the packages that have the octal
+PSRAM inside (the eFuses say so: otherwise `-ENODEV` and the pads GPIO33-37 are left alone). The commands (the set-up of the chip) always
+run at 40 MHz. The core clock is shared with the flash: it keeps its clock unless `boot_flash_clock_hz` / `boot_flash_lines` say otherwise
+(the Elecrow DIS08070H runs it at 80 MHz QIO - the display scanned out of the PSRAM loses less to the reads of the flash).
 
 Unknown keys: log a warning, do not fail. Missing `flash_size`: fail `_create`.
 Parsing lives in `src/dmqspi.c`; the result must pass

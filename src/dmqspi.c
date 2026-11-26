@@ -80,6 +80,8 @@ static void read_config(dmqspi_config_t *c, dmini_context_t ini, const char *sec
     c->clock_mode        = (uint8_t)dmini_get_int(ini, section, "clock_mode", 0);
     c->sample_shift_half = (uint8_t)dmini_get_int(ini, section, "sample_shift_half", 1);
     c->data_lines        = (uint8_t)dmini_get_int(ini, section, "data_lines", 0);
+    c->boot_flash_clock_hz = (uint32_t)dmini_get_int(ini, section, "boot_flash_clock_hz", 0);
+    c->boot_flash_lines  = (uint8_t)dmini_get_int(ini, section, "boot_flash_lines", 0);
 }
 
 dmod_dmqspi_api_declaration(1.0, bool, _validate_config, ( const dmqspi_config_t *config ))

@@ -98,6 +98,9 @@ typedef struct
     uint8_t             sample_shift_half;  /**< 1 = sample half a cycle later (SSHIFT) */
     uint8_t             data_lines;         /**< Data lines the attached chip is wired with: 1, 2, 4 or 8 (0 = what the controller has). Ports whose pads are not
                                                  free to choose (ESP32-S3: the pads of the flash) set up that many */
+    uint32_t            boot_flash_clock_hz;/**< Ports whose controller is shared with the flash the firmware runs from (ESP32-S3: chip select 0): its clock
+                                                 when the port changes the clock of the controller (0 = the clock it has) */
+    uint8_t             boot_flash_lines;   /**< ... and its read mode: 4 = four lines (QIO; the QE bit of the chip must be set), 0 = as it is */
 } dmqspi_config_t;
 
 /** Controller functional mode. */
