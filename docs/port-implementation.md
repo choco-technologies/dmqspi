@@ -69,8 +69,8 @@ serves chip select 1 only (`bank=2`, the device slot 2; `bank=1` is the flash an
 1. The pads: the fixed pads of the bus (GPIO26 CS1, GPIO27/28 SPIHD/SPIWP, GPIO31/32 SPIQ/SPID: function 0; for 8 lines GPIO33-37
    SPIIO4-7 and DQS: function 4), all with the strongest drive, and the drive of the clock pads (the DATE register). Eight lines are refused
    (`-ENODEV`) on a package whose eFuses say it has no PSRAM inside: GPIO33-37 are free pins there.
-2. The timing of the chip select (shared by SPI0 and SPI1) and the clock of the chip (`SRAM_CLK`: APB 80 MHz / divider, rounded up; up to
-   40 MHz for 4 and for 8 lines: no timing tuning of the MSPI here; an octal chip at 40 MHz DDR gives about 80 MB/s, enough for an 800x480 RGB565 display scanned out of it).
+2. The timing of the chip select (shared by SPI0 and SPI1) and the clock of the chip (`SRAM_CLK`: APB 80 MHz / divider, rounded up; at most
+   40 MHz here - the commands that set the chip up run at 40 MHz also when 80 MHz is asked for, see `_enter_memory_mapped`).
 3. 8 lines: no ECC (`SYSCON_SRAM_ACE0_ATTR` bit 8), SPI1 in the DTR mode (`DDR_FMEM_VAR_DUMMY`, `esp_rom_spi_set_dtr_swap_mode`).
 
 Everything that reconfigures the cache runs in a critical section and calls nothing but the ROM and this file: the firmware is executed
@@ -93,6 +93,16 @@ its own) in the 32 MB window of the cache - `0x3D800000` for 8 MB when the flash
 same pages are seen by the instruction bus 0x6000000 higher; that alias is a matter of the loader of dmod (`DMOD_CODE_ALIAS`), not of the
 controller. `_flush_mapped` writes the lines of a range back to the chip (ROM `Cache_WriteBack_Addr`), `_invalidate_mapped` drops them from
 the cache (`Cache_Invalidate_Addr`): a client flushes first when it wants to keep what it wrote.
+
+**80 MHz (8 lines, `clock_hz` above 40 MHz).** Once the window is mapped, with the caches suspended and the interrupts off, the core clock
+of the MSPI goes from 80 to 160 MHz (`SPI_MEM_CORE_CLK_SEL` of SPI0 and SPI1) and the chip select 1 gets the core / 2. The core clock is
+shared with the flash (chip select 0): its divider becomes the one for `boot_flash_clock_hz`, or for the clock it had; `boot_flash_lines=4`
+switches its read mode to QIO with the ROM routines ESP-IDF's bootloader uses (`esp_rom_spiflash_config_readmode`,
+`esp_rom_spiflash_select_qio_pins`) - the QE bit of the chip has to be set already. At 80 MHz the DDR data has to be sampled late: the
+candidates of ESP-IDF's table for a 160 MHz core and an 80 MHz chip (`SPI_SMEM_DIN_MODE/NUM`, the extra dummy cycles of
+`SPI_SMEM_TIMING_CALI`) are tried by writing 4 kB at the end of the window through the cache and reading them back, the middle of the longest
+run that reads back is kept. The candidates with the HCLK delay modes are not in the list: they hang the cache of this chip. Fewer than
+three in a row read back: the bus goes back to 40 MHz (and the report of the window says so).
 
 ## Pitfalls
 * `s32c1i` (the atomic compare-and-set of the Xtensa) does not work on external RAM.

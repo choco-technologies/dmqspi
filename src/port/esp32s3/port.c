@@ -23,7 +23,8 @@
 #define MAX_DATA_BYTES      64U         /* the W0..W15 registers of the controller */
 #define CS1_MASK            BIT(1)
 #define MAX_CLOCK_HZ        40000000U   /* no timing tuning of the MSPI here: what ESP-IDF runs without it */
-#define MAX_OCTAL_CLOCK_HZ  40000000U   /* the octal DDR bus: 40 MHz runs without tuning (80 MHz would need it); checked on an ESP32-S3-WROOM-1-N4R8 */
+#define MAX_OCTAL_CLOCK_HZ  80000000U   /* the octal DDR bus: 40 MHz runs without tuning, 80 MHz needs the sampling of the data tuned (tune_80mhz) */
+#define SAFE_OCTAL_CLOCK_HZ 40000000U
 
 typedef struct
 {
@@ -422,7 +423,7 @@ dmod_dmqspi_port_api_declaration(1.0, int, _init, ( const dmqspi_config_t *confi
     reg_set_field(MSPI_SMEM_AC_REG(0), 0x1FU, SMEM_CS_SETUP_TIME_S, cs_time);
     if (lines == 8U)
         reg_set_field(MSPI_SMEM_AC_REG(0), 0x3FU, SMEM_CS_HOLD_DELAY_S, 2U);
-    set_clock(clock_divider(config->clock_hz));
+    set_clock(clock_divider(lines == 8U && config->clock_hz > SAFE_OCTAL_CLOCK_HZ ? SAFE_OCTAL_CLOCK_HZ : config->clock_hz));   /* the commands run at the safe clock */
     if (lines == 8U)
     {
         /* the commands of SPI1 in the DTR mode */
@@ -485,6 +486,154 @@ static int find_free_entries(uint32_t pages)
     return -1;
 }
 
+
+/*
+ * ---- 80 MHz ----
+ * The octal DDR bus runs at 80 MHz from a core clock of the MSPI of 160 MHz (the core clock is shared with the flash, chip select 0: its
+ * divider is doubled, so it keeps its clock - or it gets boot_flash_clock_hz, and four lines with boot_flash_lines=4). At this clock the
+ * DDR data has to be sampled with a delay: the candidates of ESP-IDF for a 160 MHz core and an 80 MHz chip are tried by writing a pattern
+ * through the cache and reading it back (the last 4 kB of the window, before anything uses the memory), and the middle of the longest run
+ * that reads back is taken. The candidates that use the HCLK delay modes are left out: they hang the cache on this chip. Nothing reads
+ * back: the bus goes back to 40 MHz.
+ */
+#define SMEM_DIN_MODE_REG(i)            (MSPI_BASE(i) + 0xC0UL)
+#define SMEM_DIN_NUM_REG(i)             (MSPI_BASE(i) + 0xC4UL)
+#define SMEM_TIMING_CALI_REG(i)         (MSPI_BASE(i) + 0xBCUL)
+#define MSPI_CLOCK_REG(i)               (MSPI_BASE(i) + 0x14UL)       /* the clock of the flash */
+#define MSPI_CORE_CLK_SEL_REG(i)        (MSPI_BASE(i) + 0xECUL)       /* 0: 80, 1: 120, 2: 160, 3: 240 MHz */
+#define CORE_CLK_SEL_80MHZ              0U
+#define CORE_CLK_SEL_160MHZ             2U
+#define ROM_CACHE_SUSPEND_ICACHE        0x4000189cUL
+#define ROM_CACHE_RESUME_ICACHE         0x400018a8UL
+#define ROM_EFUSE_GET_SPICONFIG         0x40001f74UL    /* ets_efuse_get_spiconfig */
+#define ROM_EFUSE_GET_WP_PAD            0x40001fa4UL    /* ets_efuse_get_wp_pad */
+#define ROM_SPIFLASH_CONFIG_READMODE    0x40000aa4UL    /* esp_rom_spiflash_config_readmode */
+#define ROM_SPIFLASH_SELECT_QIO_PINS    0x40000a68UL    /* esp_rom_spiflash_select_qio_pins */
+#define ROM_SPIFLASH_QIO                0
+#define TUNE_BYTES                      4096U
+#define TUNED_OCTAL_CLOCK_HZ            80000000U
+
+typedef struct { uint8_t mode, num, extra; } tune_cfg_t;
+/* {input delay mode, delay cycles, extra dummy cycles}, in the order of the delay */
+static const tune_cfg_t k_tune_table[] = { {0, 0, 0}, {1, 0, 1}, {0, 0, 1}, {1, 0, 2}, {0, 0, 2} };
+#define TUNE_COUNT                      (sizeof(k_tune_table) / sizeof(k_tune_table[0]))
+
+static uint32_t clock_reg_value(uint32_t div)
+{
+    return div == 1U ? SRAM_CLK_EQU_SYSCLK : (((div - 1U) << SRAM_CLK_CNT_N_S) | ((div / 2U - 1U) << SRAM_CLK_CNT_H_S) | ((div - 1U) << SRAM_CLK_CNT_L_S));
+}
+
+/* The divider of the flash for the core clock `core_hz`: boot_flash_clock_hz if set (not above it), else the clock the flash has now */
+static uint32_t flash_divider(uint32_t core_hz)
+{
+    uint32_t now_reg = *reg(MSPI_CLOCK_REG(0));
+    uint32_t now_div = (now_reg & SRAM_CLK_EQU_SYSCLK) != 0U ? 1U : ((now_reg >> SRAM_CLK_CNT_N_S) & 0xFFU) + 1U;
+    uint32_t now_core_hz = (*reg(MSPI_CORE_CLK_SEL_REG(0)) & 3U) == CORE_CLK_SEL_160MHZ ? 2U * APB_FREQUENCY_HZ : APB_FREQUENCY_HZ;
+    uint32_t hz = s_q.config.boot_flash_clock_hz != 0U ? s_q.config.boot_flash_clock_hz : now_core_hz / now_div;
+    uint32_t div = (core_hz + hz - 1U) / hz;
+    return div < 2U ? 2U : div;
+}
+
+/*
+ * The core clock of the MSPI with both caches suspended and the interrupts off (this code is in the internal RAM, the ROM routines in the
+ * ROM; nothing in between may call into the firmware, which runs from the flash): the flash gets its divider, the chip select 1 the core clock / 2, the flash four lines if asked for (the QE bit of the chip has to be
+ * set already - the board says so).
+ */
+static void __attribute__((noinline)) switch_core_clock(bool fast)
+{
+    /* computed before the caches go: a division may be a routine of the firmware, which is in the flash */
+    uint32_t flash_div = flash_divider(fast ? 2U * APB_FREQUENCY_HZ : APB_FREQUENCY_HZ);
+    uint32_t ai = ((uint32_t (*)(void))ROM_CACHE_SUSPEND_ICACHE)();
+    uint32_t ad = ((uint32_t (*)(void))ROM_CACHE_SUSPEND_DCACHE)();
+    for (uint32_t i = 0; i < 2U; i++)
+    {
+        *reg(MSPI_CORE_CLK_SEL_REG(i)) = fast ? CORE_CLK_SEL_160MHZ : CORE_CLK_SEL_80MHZ;
+        *reg(MSPI_CLOCK_REG(i)) = clock_reg_value(flash_div);
+        *reg(MSPI_SRAM_CLK_REG(i)) = clock_reg_value(2U);
+    }
+    if (fast && s_q.config.boot_flash_lines == 4U)
+    {
+        uint32_t spiconfig = ((uint32_t (*)(void))ROM_EFUSE_GET_SPICONFIG)();
+        uint32_t wp = ((uint32_t (*)(void))ROM_EFUSE_GET_WP_PAD)();
+        ((int (*)(int))ROM_SPIFLASH_CONFIG_READMODE)(ROM_SPIFLASH_QIO);
+        ((void (*)(uint8_t, uint32_t))ROM_SPIFLASH_SELECT_QIO_PINS)((uint8_t)wp, spiconfig);
+    }
+    ((void (*)(uint32_t))ROM_CACHE_RESUME_DCACHE)(ad);
+    ((void (*)(uint32_t))ROM_CACHE_RESUME_ICACHE)(ai);
+}
+
+static void tune_apply(const tune_cfg_t *c)
+{
+    uint32_t m = 0U, n = 0U;
+    for (uint32_t i = 0; i < 8U; i++)
+    {
+        m |= (uint32_t)c->mode << (3U * i);
+        n |= (uint32_t)c->num << (2U * i);
+    }
+    for (uint32_t i = 0; i < 2U; i++)
+    {
+        *reg(SMEM_DIN_MODE_REG(i)) = m | ((uint32_t)c->mode << 24);         /* the eight data lines and the DQS */
+        *reg(SMEM_DIN_NUM_REG(i)) = n | ((uint32_t)c->num << 16);
+        *reg(SMEM_TIMING_CALI_REG(i)) = 1U | (c->extra != 0U ? (((uint32_t)c->extra << 2) | 2U) : 0U);   /* the clock of the timing, the extra dummy */
+    }
+}
+
+static bool tune_try(volatile uint32_t *w, uint32_t address, uint32_t seed)
+{
+    for (uint32_t i = 0; i < TUNE_BYTES / 4U; i++)
+        w[i] = (seed + i) * 2654435761U;
+    ((int (*)(uint32_t, uint32_t))ROM_CACHE_WRITEBACK_ADDR)(address, TUNE_BYTES);
+    ((int (*)(uint32_t, uint32_t))ROM_CACHE_INVALIDATE_ADDR)(address, TUNE_BYTES);
+    for (uint32_t i = 0; i < TUNE_BYTES / 4U; i++)
+        if (w[i] != (seed + i) * 2654435761U)
+            return false;
+    return true;
+}
+
+/* Returns the clock reached: 80 MHz with the sampling found, else the safe one */
+static uint32_t tune_80mhz(uint32_t window_address)
+{
+    uint32_t addr = window_address + s_q.entries * (uint32_t)MMU_PAGE_SIZE - TUNE_BYTES;
+    volatile uint32_t *w = (volatile uint32_t *)addr;
+    bool ok[TUNE_COUNT];
+    uint32_t found = 0U;
+    Dmod_EnterCritical();
+    switch_core_clock(true);
+    Dmod_ExitCritical();
+    for (uint32_t t = 0; t < TUNE_COUNT; t++)
+    {
+        tune_apply(&k_tune_table[t]);
+        bool pass = true;
+        for (uint32_t k = 0; k < 4U && pass; k++)
+            pass = tune_try(w, addr, 0x1000U * (k + 1U) + t);
+        ok[t] = pass;
+        found += pass ? 1U : 0U;
+    }
+    uint32_t run = 0U, best_run = 0U, best_start = 0U, start = 0U;
+    for (uint32_t t = 0; t < TUNE_COUNT; t++)
+    {
+        if (!ok[t]) { run = 0U; continue; }
+        if (run++ == 0U) start = t;
+        if (run > best_run) { best_run = run; best_start = start; }
+    }
+    if (best_run < 3U)
+    {
+        DMOD_LOG_ERROR("dmqspi: no stable sampling at 80 MHz (%u of %u settings read back): 40 MHz\n", (unsigned)found, (unsigned)TUNE_COUNT);
+        tune_apply(&(tune_cfg_t){0, 0, 0});
+        *reg(SMEM_TIMING_CALI_REG(0)) = 0U;
+        *reg(SMEM_TIMING_CALI_REG(1)) = 0U;
+        Dmod_EnterCritical();
+        switch_core_clock(false);
+        Dmod_ExitCritical();
+        return SAFE_OCTAL_CLOCK_HZ;
+    }
+    const tune_cfg_t *best = &k_tune_table[best_start + best_run / 2U];
+    tune_apply(best);
+    DMOD_LOG_INFO("dmqspi: 80 MHz, sampling {%u, %u, %u} (%u of %u settings read back)\n", (unsigned)best->mode, (unsigned)best->num,
+                  (unsigned)best->extra, (unsigned)found, (unsigned)TUNE_COUNT);
+    return TUNED_OCTAL_CLOCK_HZ;
+}
+
 dmod_dmqspi_port_api_declaration(1.0, int, _enter_memory_mapped, ( dmqspi_instance_t instance, const dmqspi_map_request_t *request, dmqspi_map_info_t *info ))
 {
     if (instance != 1U || request == NULL || !s_q.ready) return -EINVAL;
@@ -506,11 +655,17 @@ dmod_dmqspi_port_api_declaration(1.0, int, _enter_memory_mapped, ( dmqspi_instan
     map_critical(request, s_q.first_entry, s_q.entries);
     Dmod_ExitCritical();
 
+    uint32_t clock_hz = APB_FREQUENCY_HZ / clock_divider(s_q.lines == 8U && s_q.config.clock_hz > SAFE_OCTAL_CLOCK_HZ ? SAFE_OCTAL_CLOCK_HZ : s_q.config.clock_hz);
+    if (s_q.lines == 8U && s_q.config.clock_hz > SAFE_OCTAL_CLOCK_HZ)
+    {
+        s_q.mode = dmqspi_mode_memory_mapped;
+        clock_hz = tune_80mhz(MMU_DBUS_BASE + s_q.first_entry * MMU_PAGE_SIZE);
+    }
     if (info != NULL)
     {
         info->base = MMU_DBUS_BASE + s_q.first_entry * MMU_PAGE_SIZE;
         info->size = pages * MMU_PAGE_SIZE;
-        info->clock_hz = APB_FREQUENCY_HZ / clock_divider(s_q.config.clock_hz);
+        info->clock_hz = clock_hz;
     }
     s_q.mode = dmqspi_mode_memory_mapped;
     return 0;
